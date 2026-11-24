@@ -1,0 +1,84 @@
+<div class="row">
+  <div class="col-sm-4 col-md-3">
+    <div class="scores-sidebar">
+      <form class="scores-filter-form" ng-submit="filter()">
+        <div class="form-group">
+          <label for="score_time_filter">Date submitted:</label>
+          <select class="form-control" ng-model="filters.time" ng-change="filter()" id="score_time_filter">
+            <option value="all">All time</option>
+            <option value="month">Last 30 days</option>
+            <option value="week">Last 7 days</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="score_order_filter">Order:</label>
+          <select class="form-control" ng-model="filters.order" ng-change="filter()" id="score_order_filter">
+            <option value="value">Top</option>
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="initials">Name</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="score_country_filter">Country:</label>
+          <div multi-select input-model="country_options" button-label="name" item-label="name" tick-property="selected" default-label="All" max-labels="3" on-close="filter()"></div>
+        </div>
+        <div class="form-group">
+          <label for="score_initials_filter">Initials:</label>
+          <input type="text" id="score_initials_filter" ng-class="{rounded: filters.initials.length < 1}" class="form-control initials-filter" ng-model="filters.initials" maxlength="3">
+          <button type="button" ng-click="filters.initials = ''; filter()" class="btn btn-default" ng-show="filters.initials.length > 0">
+            <span class="glyphicon glyphicon-remove"></span>
+          </button>
+        </div>
+        <div class="form-group">
+          <div class="radio-inline">
+            <label>
+              <input ng-model="settings.view" ng-change="filter()" value="table" type="radio">
+              Table
+            </label>
+          </div>
+          <div class="radio-inline">
+            <label>
+              <input ng-model="settings.view" ng-change="filter()" value="map" type="radio">
+              Map
+            </label>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="col-sm-8 col-md-6">
+    <div class="scores-map" ng-class="{shown: settings.view === 'map'}" vector-map countries="countries" country-codes="filters.country_codes"></div>
+    <div ng-show="settings.view === 'table'">
+      <table class="table scores-table">
+        <thead>
+          <tr>
+            <th class="score-rank">
+              <a ng-click="filters.order = 'value'; filter()">Rank</a>
+            </th>
+            <th class="score-value">
+              <a ng-click="filters.order = 'value'; filter()">Score</a>
+            </th>
+            <th class="score-initials">
+              <a ng-click="filters.order = 'initials'; filter()">Name</a>
+            </th>
+            <th class="score-country"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr ng-repeat="score in score_results.scores" class="row-{{score.rank}}" ng-class="{mine: score.is_mine}" tooltip="{{score.created_at | amDateFormat:'YYYY-MM-DD'}}" tooltip-placement="right">
+            <td class="score-rank">{{score.rank}}</td>
+            <td class="score-value">{{score.value}}</td>
+            <td class="score-initials">{{score.initials}}</td>
+            <td class="score-country">
+              <img class="flag flag-{{score.country_code}}" tooltip="{{score.country}}" ng-show="score.country &amp;&amp; score.country_code" alt="{{score.country}}" src="images/blank.gif">
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="text-center" ng-show="score_results.total_pages &gt; 1">
+        <pagination total-items="score_results.total_records" ng-model="score_results.page" ng-change="change_page()" previous-text="&lt;" next-text="&gt;" boundary-links="true" first-text="&laquo;" last-text="&raquo;" max-size="5" items-per-page="20"></pagination>
+      </div>
+    </div>
+  </div>
+</div>

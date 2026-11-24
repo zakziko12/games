@@ -1,0 +1,564 @@
+/**
+ * Room/game socket handling, factored out of server.js so it can be tested
+ * against a fake room store without needing real Firestore or guessing at
+ * credentials. Production wiring (server.js) passes the real Firestore-backed
+ * store; tests pass a fake with the same {saveRoom, loadRoom, deleteRoom}
+ * shape.
+ *
+ * `rooms` is an in-memory cache for speed -- every mutation is also written
+ * through to roomStore so a fresh process (server restart) can reload a
+ * room's data from persistence instead of losing it.
+ *
+ * Reconnection is gated by a per-seat token (see `tokens` on the room and
+ * `generateToken()` below) generated on create/join and required on
+ * rejoin_room, so a room code alone is no longer enough to take over a
+ * player's seat.
+ *
+ * Issue 1 — Player Profile System v1:
+ * Move telemetry is logged to Firestore matchLogs/{roomId} on every confirmed
+ * make_move. playerStorage is passed in from server.js alongside roomStore,
+ * using the same dependency-injection pattern. All logging is fire-and-forget
+ * (not awaited where it would delay the ack/emit to players) and never throws
+ * into the game flow — a logging failure must never affect a live match.
+ */
+
+const crypto = require('crypto');
+const engine = require('./veiled-chess-core-server.js');
+
+
+const ROOM_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function generateRoomCode() {
+    let code = '';
+    for (let i = 0; i < 5; i++) {
+        code += ROOM_CODE_CHARS[Math.floor(Math.random() * ROOM_CODE_CHARS.length)];
+    }
+    return code;
+}
+
+function generateToken() {
+    return crypto.randomBytes(16).toString('hex');
+}
+
+const FEEDBACK_QUESTIONS = [
+    { id: 'veil-predictable', text: 'Was the veil behavior predictable?' },
+    { id: 'pace-comfortable', text: 'Did the match pace feel comfortable?' },
+    { id: 'ending-clear', text: 'Was it clear why the match ended?' },
+];
+
+function feedbackPromptFor(anonymousMatchId) {
+    const index = anonymousMatchId.charCodeAt(0) % FEEDBACK_QUESTIONS.length;
+    return FEEDBACK_QUESTIONS[index];
+}
+
+function createInitialBoard() {
+    const board = Array(8).fill(null).map(() => Array(8).fill(null));
+    for (let i = 0; i < 8; i++) {
+        board[1][i] = { type: 'p', color: 'b' };
+        board[6][i] = { type: 'p', color: 'w' };
+    }
+    board[0][0] = { type: 'r', color: 'b' }; board[0][7] = { type: 'r', color: 'b' };
+    board[0][1] = { type: 'n', color: 'b' }; board[0][6] = { type: 'n', color: 'b' };
+    board[0][2] = { type: 'b', color: 'b' }; board[0][5] = { type: 'b', color: 'b' };
+    board[0][3] = { type: 'rb', color: 'b' };
+    board[0][4] = { type: 'd', color: 'b' };
+    board[7][0] = { type: 'r', color: 'w' }; board[7][7] = { type: 'r', color: 'w' };
+    board[7][1] = { type: 'n', color: 'w' }; board[7][6] = { type: 'n', color: 'w' };
+    board[7][2] = { type: 'b', color: 'w' }; board[7][5] = { type: 'b', color: 'w' };
+    board[7][3] = { type: 'rb', color: 'w' };
+    board[7][4] = { type: 'd', color: 'w' };
+    return board;
+}
+
+function parseSquare(sq) {
+    if (typeof sq !== 'string' || sq.length !== 2) return null;
+    const c = sq.charCodeAt(0) - 97;
+    const r = 8 - parseInt(sq[1], 10);
+    if (c < 0 || c > 7 || r < 0 || r > 7 || Number.isNaN(r)) return null;
+    return { r, c };
+}
+
+function publicRoomState(room) {
+    const state = {
+        board: room.board,
+        turn: room.turn,
+        gameOver: room.gameOver,
+        winner: room.winner,
+        playersConnected: { w: !!room.players.w, b: !!room.players.b },
+    };
+    if (room.gameOver && room.anonymousMatchId && room.feedbackEnabled !== false) {
+        state.feedback = {
+            anonymousMatchId: room.anonymousMatchId,
+            prompt: feedbackPromptFor(room.anonymousMatchId),
+        };
+    }
+    return state;
+}
+
+/**
+ * Detects which opponent squares became newly veiled after a move.
+ * Returns true if any opponent piece transitioned from unveiled to veiled.
+ *
+ * @param {Array} boardBefore  board snapshot before engine.makeMove
+ * @param {Array} boardAfter   board returned by engine.makeMove
+ * @param {string} moverColor  the color that just moved ('w' or 'b')
+ */
+function didVeilOpponent(boardBefore, boardAfter, moverColor) {
+    const opponentColor = moverColor === 'w' ? 'b' : 'w';
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            const before = boardBefore[r][c];
+            const after = boardAfter[r][c];
+            if (
+                before && before.color === opponentColor && !before.veiled &&
+                after && after.color === opponentColor && after.veiled
+            ) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function countNewlyVeiled(boardBefore, boardAfter) {
+    let count = 0;
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            const before = boardBefore[r][c];
+            const after = boardAfter[r][c];
+            if (before && !before.veiled && after && after.veiled) count += 1;
+        }
+    }
+    return count;
+}
+
+function isRebirthAdvance(piece, from, to) {
+    if (!piece || piece.type !== 'rb') return false;
+    return piece.color === 'w' ? to.r < from.r : to.r > from.r;
+}
+
+function normalizeFeedback(payload, expectedQuestionId, anonymousMatchId) {
+    const rating = payload?.rating === null || payload?.rating === '' || payload?.rating === undefined
+        ? null
+        : Number(payload.rating);
+    const allowedAnswers = new Set(['yes', 'mostly', 'no', 'not-sure', 'skipped']);
+    const allowedKinds = new Set(['note', 'bug', 'none']);
+    const answer = payload?.answer || 'skipped';
+    const kind = payload?.kind || 'none';
+    const comment = typeof payload?.comment === 'string'
+        ? payload.comment.replace(/[\u0000-\u001F\u007F]/g, ' ').trim()
+        : '';
+
+    if (payload?.consent !== true) return { error: 'Consent is required before submitting.' };
+    if (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 5)) {
+        return { error: 'Rating must be a whole number from 1 to 5.' };
+    }
+    if (payload?.questionId !== expectedQuestionId || !allowedAnswers.has(answer)) {
+        return { error: 'Feedback question or answer is invalid.' };
+    }
+    if (!allowedKinds.has(kind)) return { error: 'Feedback type is invalid.' };
+    if (comment.length > 600) return { error: 'Comment must be 600 characters or fewer.' };
+    if (rating === null && answer === 'skipped' && comment.length === 0) {
+        return { error: 'Choose an answer, add a rating, or leave a comment.' };
+    }
+
+    return {
+        value: {
+            schemaVersion: 'anonymous-feedback.v1',
+            anonymousMatchId,
+            submittedAt: Date.now(),
+            rating,
+            questionId: expectedQuestionId,
+            answer,
+            kind: comment ? kind : 'none',
+            comment,
+        },
+    };
+}
+
+/**
+ * Deep-clones a board so the before-snapshot is not mutated by engine.makeMove.
+ */
+function cloneBoard(board) {
+    return board.map(row => row.map(cell => (cell ? { ...cell } : null)));
+}
+
+// `rooms` is created fresh each call -- this is the "server restarted" seam
+// for testing: calling createGameNamespace again with a NEW empty rooms
+// cache but the SAME underlying roomStore simulates a real restart, since
+// nothing survives in memory except what's reloaded from the store.
+function createGameNamespace(io, roomStore, playerStorage, options = {}) {
+    const rooms = {};
+    const touched = new Map();
+    const now = options.now || Date.now;
+    function expireRooms() {
+        if (!options.idleMs) return;
+        for (const [id, at] of touched) {
+            if (now() - at < options.idleMs) continue;
+            delete rooms[id];
+            touched.delete(id);
+            io.to(id).emit('room_expired', { reason: 'Demo room expired after inactivity. Create a new room.' });
+            // Remove old subscriptions so a recycled room code cannot leak state.
+            if (typeof io.in === 'function') io.in(id).socketsLeave(id);
+        }
+    }
+    const expiryTimer = options.idleMs ? setInterval(expireRooms, Math.min(options.idleMs, 60000)) : null;
+    if (expiryTimer) expiryTimer.unref();
+
+    async function persist(roomId, room) {
+        if (options.idleMs) touched.set(roomId, now());
+        try {
+            await roomStore.saveRoom(roomId, {
+                board: room.board,
+                turn: room.turn,
+                gameOver: room.gameOver,
+                winner: room.winner,
+                players: room.players,
+                tokens: room.tokens,
+                createdAt: room.createdAt,
+                moveCount: room.moveCount,
+                lastMoveAt: room.lastMoveAt,
+                anonymousMatchId: room.anonymousMatchId,
+                anonymousTelemetry: room.anonymousTelemetry,
+                feedbackSubmitted: room.feedbackSubmitted,
+            });
+        } catch (err) {
+            // Persistence failure should not crash a live game -- the room
+            // still works from the in-memory cache; it just won't survive a
+            // restart until the next successful write. Logged, not thrown.
+            console.error(`Failed to persist room ${roomId}:`, err.message);
+        }
+    }
+
+    // Loads a room from the store into the in-memory cache if it isn't
+    // already there (e.g. after a restart). Returns the room, or null if it
+    // truly doesn't exist anywhere.
+    async function getRoom(roomId) {
+        expireRooms();
+        if (rooms[roomId]) return rooms[roomId];
+        let stored;
+        try {
+            stored = await roomStore.loadRoom(roomId);
+        } catch (err) {
+            console.error(`Failed to load room ${roomId} from store:`, err.message);
+            return null;
+        }
+        if (!stored) return null;
+        rooms[roomId] = stored;
+        return rooms[roomId];
+    }
+
+    io.on('connection', (socket) => {
+        socket.data.roomId = null;
+        socket.data.color = null;
+
+        socket.on('create_room', async (_payload, ack) => {
+            expireRooms();
+            if (options.maxRooms && socket.data.roomId && rooms[socket.data.roomId]) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Already in a demo room. Refresh before creating another.' });
+                return;
+            }
+            if (options.maxRooms && Object.keys(rooms).length >= options.maxRooms) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Demo room capacity reached. Try again after an idle room expires.' });
+                return;
+            }
+            let roomId;
+            do { roomId = generateRoomCode(); } while (rooms[roomId]);
+            const token = generateToken();
+            const room = {
+                feedbackEnabled: options.postResults !== false,
+                board: createInitialBoard(),
+                turn: 'w',
+                gameOver: false,
+                winner: null,
+                players: { w: socket.id, b: null },
+                tokens: { w: token, b: null },
+                createdAt: Date.now(),
+                moveCount: 0,
+                lastMoveAt: Date.now(),
+                anonymousMatchId: crypto.randomUUID(),
+                anonymousTelemetry: { veilEvents: 0, promotionEvents: 0, rebirthAdvances: 0 },
+                feedbackSubmitted: { w: false, b: false },
+            };
+            rooms[roomId] = room;
+            socket.join(roomId);
+            socket.data.roomId = roomId;
+            socket.data.color = 'w';
+            await persist(roomId, room);
+            if (typeof ack === 'function') {
+                ack({ ok: true, roomId, color: 'w', reconnectToken: token, state: publicRoomState(room) });
+            }
+        });
+
+        socket.on('join_room', async (payload, ack) => {
+            const roomId = ((payload && payload.roomId) || '').toUpperCase().trim();
+            const room = await getRoom(roomId);
+            if (!room) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Room not found.' });
+                return;
+            }
+            if (room.players.b && room.players.b !== socket.id) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Room is already full.' });
+                return;
+            }
+
+            if (options.maxRooms && socket.data.roomId && socket.data.roomId !== roomId && rooms[socket.data.roomId]) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Already in another demo room. Refresh before joining.' });
+                return;
+            }
+            if (room.players.w === socket.id) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Use a separate device to join the other seat.' });
+                return;
+            }
+            const token = generateToken();
+            room.players.b = socket.id;
+            room.tokens = room.tokens || {};
+            room.tokens.b = token;
+            socket.join(roomId);
+            socket.data.roomId = roomId;
+            socket.data.color = 'b';
+            await persist(roomId, room);
+
+            if (typeof ack === 'function') ack({ ok: true, roomId, color: 'b', reconnectToken: token, state: publicRoomState(room) });
+            io.to(roomId).emit('opponent_joined', { state: publicRoomState(room) });
+        });
+
+        // Rejoin after a disconnect/restart: the client remembers its own
+        // roomId, color, AND reconnectToken (localStorage). The token --
+        // not the roomId/color alone -- is what proves this client actually
+        // owns that seat, since a room code is only 5 characters and would
+        // otherwise let anyone claim either seat mid-game.
+        socket.on('rejoin_room', async (payload, ack) => {
+            const roomId = ((payload && payload.roomId) || '').toUpperCase().trim();
+            const color = payload && payload.color;
+            const reconnectToken = payload && payload.reconnectToken;
+
+            if (color !== 'w' && color !== 'b') {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Invalid color.' });
+                return;
+            }
+            const room = await getRoom(roomId);
+            if (!room) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Room not found.' });
+                return;
+            }
+
+            const expectedToken = room.tokens && room.tokens[color];
+            if (!expectedToken || expectedToken !== reconnectToken) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Invalid or missing reconnect token.' });
+                return;
+            }
+
+            if (options.maxRooms && socket.data.roomId && socket.data.roomId !== roomId && rooms[socket.data.roomId]) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Already in another demo room. Refresh before rejoining.' });
+                return;
+            }
+            room.players[color] = socket.id;
+            socket.join(roomId);
+            socket.data.roomId = roomId;
+            socket.data.color = color;
+            await persist(roomId, room);
+
+            if (typeof ack === 'function') ack({ ok: true, roomId, color, state: publicRoomState(room) });
+            io.to(roomId).emit('opponent_joined', { state: publicRoomState(room) });
+        });
+
+        socket.on('make_move', async (payload, ack) => {
+            const roomId = socket.data.roomId;
+            const room = roomId && await getRoom(roomId);
+            if (!room) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Not in a room.' });
+                return;
+            }
+            if (room.gameOver) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Game is already over.' });
+                return;
+            }
+
+            const moverColor = socket.data.color;
+            if (moverColor !== room.turn) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'It is not your turn.' });
+                return;
+            }
+
+            const from = parseSquare(payload && payload.from);
+            const to = parseSquare(payload && payload.to);
+            if (!from || !to) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Invalid square notation.' });
+                return;
+            }
+
+            const validation = engine.validateMove(room.board, room.turn, from, to);
+            if (!validation.valid) {
+                if (typeof ack === 'function') ack({ ok: false, reason: validation.reason });
+                return;
+            }
+
+            // --- Issue 1: capture pre-move state for telemetry ---
+            const boardBefore = cloneBoard(room.board);
+            const pieceBeforeMove = boardBefore[from.r][from.c];
+            const capturedPiece = boardBefore[to.r][to.c];
+            const evalBefore = engine.evaluateBoard(boardBefore, moverColor);
+            const moveTimestamp = Date.now();
+            const timeSinceLastMove = moveTimestamp - (room.lastMoveAt || moveTimestamp);
+            const isFirstMove = room.moveCount === 0;
+            // -----------------------------------------------------
+
+            // Verified by test suite: makeMove must be called with the color
+            // that JUST MOVED (moverColor), not the opponent.
+            const result = engine.makeMove(room.board, { from, to }, moverColor);
+
+            // --- Issue 1: capture post-move state for telemetry ---
+            const evalAfter = engine.evaluateBoard(result.board, moverColor);
+            const movedPieceAfter = result.board[to.r][to.c];
+            const veiledSelf = !!(movedPieceAfter && movedPieceAfter.veiled);
+            const veiledOpponent = didVeilOpponent(boardBefore, result.board, moverColor);
+            const sacrifice = !capturedPiece && veiledSelf;
+            const promotedTo = (
+                pieceBeforeMove.type === 'p' &&
+                movedPieceAfter &&
+                movedPieceAfter.type !== 'p'
+            ) ? movedPieceAfter.type : null;
+            const newlyVeiled = countNewlyVeiled(boardBefore, result.board);
+            // -----------------------------------------------------
+
+            room.board = result.board;
+            room.gameOver = result.gameOver;
+            room.winner = result.winner || null;
+            room.moveCount = (room.moveCount || 0) + 1;
+            room.lastMoveAt = moveTimestamp;
+            room.anonymousTelemetry = room.anonymousTelemetry || { veilEvents: 0, promotionEvents: 0, rebirthAdvances: 0 };
+            room.anonymousTelemetry.veilEvents += newlyVeiled;
+            if (promotedTo) room.anonymousTelemetry.promotionEvents += 1;
+            if (isRebirthAdvance(pieceBeforeMove, from, to)) room.anonymousTelemetry.rebirthAdvances += 1;
+            if (!room.gameOver) {
+                room.turn = room.turn === 'w' ? 'b' : 'w';
+            }
+            await persist(roomId, room);
+
+            if (typeof ack === 'function') ack({ ok: true, state: publicRoomState(room) });
+            io.to(roomId).emit('state_update', { state: publicRoomState(room) });
+
+            // --- Issue 1: fire-and-forget match log writes ---
+            // Never awaited — logging must never delay the ack/emit above.
+            // Never throws into game flow — a Firestore failure here is logged
+            // and swallowed, not surfaced to the player.
+            if (playerStorage) {
+                const moveEntry = {
+                    moveNum: room.moveCount,
+                    color: moverColor,
+                    from: payload.from,
+                    to: payload.to,
+                    piece: pieceBeforeMove.type,
+                    capturedPiece: capturedPiece ? capturedPiece.type : null,
+                    evalBefore,
+                    evalAfter,
+                    severity: engine.getSeverityTier(evalBefore, evalAfter, moverColor),
+                    veiled: veiledSelf,
+                    veiledOpponent,
+                    sacrifice,
+                    inversionClause: null,
+                    promotedTo,
+                    timeMs: timeSinceLastMove,
+                    timestamp: moveTimestamp,
+                };
+
+                // Keep writes ordered inside a detached task: create-before-
+                // append on move one, then append-before-finalize at game end.
+                // The task remains fire-and-forget, so storage never delays play.
+                (async () => {
+                    if (isFirstMove) {
+                        // Legacy match logs support the separately governed,
+                        // opt-in player profile roadmap. Anonymous analytics are
+                        // written to a distinct collection below.
+                        await playerStorage.createMatchLog(roomId, room.tokens);
+                    }
+                    await playerStorage.appendMove(roomId, moveEntry);
+
+                    if (room.gameOver && room.winner) {
+                        const completedAt = Date.now();
+                        const summary = {
+                            schemaVersion: 'anonymous-playtest.v1',
+                            anonymousMatchId: room.anonymousMatchId,
+                            completedAt,
+                            durationMs: Math.max(0, completedAt - room.createdAt),
+                            moveCount: room.moveCount,
+                            fogMode: false,
+                            winner: room.winner,
+                            winCondition: 'rebirth-control-lost',
+                            ...room.anonymousTelemetry,
+                        };
+                        await playerStorage.finalizeMatchLog(roomId, room.winner);
+                        if (typeof playerStorage.saveAnonymousCompletedGame === 'function') {
+                            await playerStorage.saveAnonymousCompletedGame(summary);
+                        }
+                    }
+                })().catch((err) => {
+                    console.error(`[telemetry] ordered write failed for ${roomId}:`, err.message);
+                });
+            }
+            // -------------------------------------------------
+
+            // AT Proto event posting — additive only, fire-and-forget. This is
+            // the one place a real (server-authoritative) remote match's
+            // gameOver flips from false to true, so it's the correct trigger
+            // for "post a real match result." Not awaited: a slow or failed
+            // post to Bluesky must never delay or affect the ack/emit above,
+            // which have already gone out to the players by this point.
+            if (room.gameOver && room.winner && options.postResults !== false) {
+                require('./atprotoPoster.js').postMatchResult({ winner: room.winner });
+            }
+        });
+
+        socket.on('submit_feedback', async (payload, ack) => {
+            const roomId = socket.data.roomId;
+            const color = socket.data.color;
+            const room = roomId && await getRoom(roomId);
+            if (!room || !room.gameOver || (color !== 'w' && color !== 'b') || room.players[color] !== socket.id) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Feedback is available after your completed match.' });
+                return;
+            }
+            room.feedbackSubmitted = room.feedbackSubmitted || { w: false, b: false };
+            if (room.feedbackSubmitted[color]) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Feedback was already submitted for this match.' });
+                return;
+            }
+            if (!playerStorage || typeof playerStorage.saveAnonymousFeedback !== 'function') {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Feedback storage is unavailable.' });
+                return;
+            }
+
+            const prompt = feedbackPromptFor(room.anonymousMatchId);
+            const normalized = normalizeFeedback(payload, prompt.id, room.anonymousMatchId);
+            if (normalized.error) {
+                if (typeof ack === 'function') ack({ ok: false, reason: normalized.error });
+                return;
+            }
+
+            try {
+                await playerStorage.saveAnonymousFeedback(normalized.value);
+                room.feedbackSubmitted[color] = true;
+                await persist(roomId, room);
+                if (typeof ack === 'function') ack({ ok: true });
+            } catch (_err) {
+                if (typeof ack === 'function') ack({ ok: false, reason: 'Feedback could not be saved. Your game result is unaffected.' });
+            }
+        });
+
+        socket.on('disconnect', () => {
+            const roomId = socket.data.roomId;
+            const room = roomId && rooms[roomId];
+            if (!room) return;
+            io.to(roomId).emit('opponent_disconnected', { color: socket.data.color });
+        });
+    });
+
+    return { rooms, expireRooms, close() { if (expiryTimer) clearInterval(expiryTimer); } }; // lifecycle/test hooks (to simulate a restart by discarding it)
+}
+
+module.exports = {
+    createGameNamespace,
+    createInitialBoard,
+    publicRoomState,
+    feedbackPromptFor,
+    normalizeFeedback,
+};

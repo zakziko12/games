@@ -1,0 +1,1210 @@
+<!doctype html>
+<!-- Lantern Links 1.8 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lantern Links – a light-routing puzzle</title>
+<meta name="description" content="Lantern Links is a free browser puzzle: rotate tiles to carry light from the core to every lantern. Endless levels, no download, works on phone and desktop.">
+<meta name="theme-color" content="#14172b">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 52'%3E%3Cdefs%3E%3CradialGradient id='fglow' cx='50%25' cy='50%25' r='50%25'%3E%3Cstop offset='0' stop-color='%23ffc857' stop-opacity='.6'/%3E%3Cstop offset='1' stop-color='%23ffc857' stop-opacity='0'/%3E%3C/radialGradient%3E%3ClinearGradient id='fglass' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23ffd98a'/%3E%3Cstop offset='.5' stop-color='%23fff6d8'/%3E%3Cstop offset='1' stop-color='%23f5b942'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='20' cy='30' r='20' fill='url(%23fglow)'/%3E%3Cpath d='M15 6a5 5 0 0 1 10 0' fill='none' stroke='%23ffc857' stroke-width='2.6' stroke-linecap='round'/%3E%3Crect x='12' y='8' width='16' height='5' rx='2' fill='%23ffc857'/%3E%3Crect x='9' y='14' width='22' height='26' rx='8' fill='url(%23fglass)' stroke='%23ffc857' stroke-width='2.6'/%3E%3Cpath d='M20 21c3 4 5 6 5 9a5 5 0 0 1-10 0c0-3 2-5 5-9z' fill='%23ff9d2e'/%3E%3Cpath d='M20 26c1.6 2 2.4 3 2.4 4.6a2.4 2.4 0 0 1-4.8 0c0-1.6.8-2.6 2.4-4.6z' fill='%23fff3cf'/%3E%3Crect x='13' y='41' width='14' height='4.5' rx='2' fill='%23ffc857'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #14172b; --bg2: #1d2140; --panel: #232850; --text: #eef0ff; --muted: #a3a8d3;
+    --accent: #ffc857; --accent2: #ff8f3f; --btn: #2e3466; --btn-hover: #3a4180;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at 50% 50%, #1f2448 0%, var(--bg) 75%);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "header" "main" "controls" "footer";
+    height: 100vh; height: 100dvh;
+    -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none;
+  }
+  [hidden] { display: none !important; }
+  /* --bw is the board width (set by layout()); header and buttons take the same width so all edges line up */
+  header {
+    grid-area: header;
+    width: 100%; max-width: calc(max(var(--bw, 648px), 288px) + 32px); margin: 0 auto; padding: 10px 16px 0;
+    display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  }
+  .titlerow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; }
+  .titlerow > .ib { justify-self: start; }
+  .ibs { display: flex; gap: 8px; justify-self: end; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: .02em; white-space: nowrap; text-align: center; }
+  h1 span { color: var(--accent); }
+  /* The title is an inline SVG logo (lettering from Fredoka, SIL Open Font License); its width sets its size */
+  h1.logo { line-height: 0; min-width: 0; }
+  h1.logo svg { display: block; width: min(230px, calc(100vw - 208px)); height: auto; margin: 0 auto; }
+  @media (max-width: 399px) {
+    body:not(.land) .titlerow { grid-template-columns: auto minmax(0, 1fr) auto; }
+    body:not(.land) h1.logo svg { width: min(230px, 100%); }
+  }
+  body.land h1.logo svg { width: 100%; }
+  @media (max-width: 359px) { h1 { font-size: 1.12rem; } .ibs { gap: 6px; } }
+  .levelbar { display: flex; align-items: center; gap: 8px; background: var(--bg2); border-radius: 12px; padding: 5px; }
+  .lvinfo { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 10px; white-space: nowrap; }
+  .lvtxt { font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .lvtxt b { color: var(--text); font-size: 1.15rem; letter-spacing: 0; margin-left: 3px; font-variant-numeric: tabular-nums; }
+  .lvstars { font-size: 1rem; letter-spacing: 2px; color: #4a5190; }
+  .lvstars .on { color: var(--accent); }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+  .stats > div { background: var(--bg2); border-radius: 10px; padding: 5px 4px; text-align: center; }
+  .stats b { display: block; color: var(--text); font-weight: 600; font-size: 1.05rem; text-transform: none; letter-spacing: 0; margin-top: 1px; }
+  .stats small { font-size: .78em; font-weight: 400; color: var(--muted); }
+  main { grid-area: main; min-height: 0; min-width: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 10px 16px; }
+  #wrap { position: relative; width: 300px; height: 300px; }
+  canvas { width: 100%; height: 100%; display: block; border-radius: 14px; background: var(--bg2); box-shadow: 0 10px 30px rgba(0,0,0,.35); touch-action: manipulation; cursor: pointer; outline: none; -webkit-touch-callout: none; }
+  canvas:focus-visible { box-shadow: 0 0 0 3px var(--accent), 0 10px 30px rgba(0,0,0,.35); }
+  .controls { grid-area: controls; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; max-width: calc(max(var(--bw, 648px), 288px) + 32px); margin: 0 auto; padding: 0 16px; }
+  footer { grid-area: footer; }
+  /* Tall screens (phones): header, board and buttons as one centred group, footer at the bottom */
+  body.tall {
+    grid-template-rows: minmax(0, 1fr) auto auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "." "header" "main" "controls" "." "footer";
+  }
+  body.tall footer { padding: 10px 16px 12px; }
+  footer .sep { white-space: nowrap; }
+  /* Wide screens (such as the site's iframe): board on the left, a side panel on the right */
+  body.land {
+    grid-template-columns: minmax(0, 1fr) auto var(--pw, 210px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto auto minmax(0, 1fr);
+    grid-template-areas:
+      ". main .        ."
+      ". main header   ."
+      ". main controls ."
+      ". main footer   ."
+      ". main .        .";
+  }
+  /* the 28px gap sits only between the board and the panel (keep in step with GAP in layout()).
+     One rhythm in the panel: 12px between blocks, 10px between Undo and Restart, 16px before the footer. */
+  /* overflow stays visible here so the board's 3px gold frame (a box-shadow) is not cut off on the left;
+     layout() always leaves at least 24px beside the board in this layout */
+  body.land main { padding: 0 28px 0 0; overflow: visible; }
+  body.land header { padding: 0 0 12px; gap: 12px; max-width: none; margin: 0; }
+  body.land .titlerow { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; column-gap: 0; }
+  body.land .titlerow h1 { grid-column: 1 / -1; grid-row: 1; text-align: center; font-size: 1.45rem; }
+  body.land .ibs { display: contents; }
+  body.land #soundBtn { grid-column: 1; grid-row: 2; justify-self: start; }
+  body.land #helpBtn { grid-column: 2; grid-row: 2; justify-self: center; }
+  body.land #fsBtn { grid-column: 3; grid-row: 2; justify-self: end; }
+  /* without a full screen button the two icons sit together in the middle */
+  body.land.nofs .titlerow { grid-template-columns: minmax(0, 1fr) auto auto minmax(0, 1fr); column-gap: 12px; }
+  body.land.nofs #soundBtn { grid-column: 2; }
+  body.land.nofs #helpBtn { grid-column: 3; }
+  body.land .controls { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 0; max-width: none; margin: 0; }
+  body.land .big { min-height: 42px; }
+  body.land .arrow { width: 34px; height: 34px; }
+  body.land .lvinfo { gap: 6px; }
+  body.land .lvstars { letter-spacing: 1px; }
+  body.land .lvtxt { letter-spacing: .05em; }
+  /* large screens: a wider panel with slightly larger text and buttons */
+  body.land.xl .titlerow h1 { font-size: 1.7rem; }
+  body.land.xl .ib { width: 36px; height: 36px; }
+  body.land.xl .ib svg { width: 19px; height: 19px; }
+  body.land.xl .arrow { width: 40px; height: 40px; }
+  body.land.xl .lvinfo { gap: 10px; }
+  body.land.xl .lvtxt { font-size: .82rem; }
+  body.land.xl .lvtxt b { font-size: 1.3rem; }
+  body.land.xl .lvstars { font-size: 1.12rem; }
+  body.land.xl .stats { font-size: .76rem; }
+  body.land.xl .stats b { font-size: 1.2rem; }
+  body.land.xl .big { min-height: 48px; font-size: 1.08rem; }
+  body.land.xl footer { font-size: .82rem; }
+  body.land .badge { top: 50%; right: 10px; transform: translateY(-50%); box-shadow: none; }
+  body.land footer { text-align: center; padding: 16px 0 0; line-height: 1.5; font-size: .72rem; white-space: nowrap; }
+  body.land footer .sep { display: none; }
+  body.land footer #srcLink { display: block; }
+  button {
+    font: inherit; font-size: .85rem; color: var(--text); background: var(--btn);
+    border: 0; border-radius: 10px; padding: 8px 12px; cursor: pointer; min-height: 36px;
+  }
+  button:hover { background: var(--btn-hover); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: #2a1a00; font-weight: 600; }
+  button.primary:hover { background: #ffd47a; }
+  /* Game buttons: soft gradient, lighter edge, a 3px press */
+  .big, .ib, .arrow {
+    position: relative; color: var(--text);
+    background: linear-gradient(180deg, #373e7a 0%, #2a3063 100%);
+    border: 1px solid #4b5398; box-shadow: 0 3px 0 #15193a, 0 6px 14px rgba(0,0,0,.22);
+  }
+  .big:hover, .ib:hover, .arrow:hover { background: linear-gradient(180deg, #424a8e 0%, #323970 100%); }
+  .big:active:not(:disabled), .ib:active, .arrow:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 0 0 #15193a, 0 2px 6px rgba(0,0,0,.22); }
+  .big:disabled:hover, .arrow:disabled:hover { background: linear-gradient(180deg, #373e7a 0%, #2a3063 100%); }
+  .big { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 8px 10px; border-radius: 12px; font-size: 1rem; font-weight: 600; white-space: nowrap; }
+  .big.dim { opacity: .45; }
+  .big svg { width: 20px; height: 20px; }
+  .badge {
+    position: absolute; top: -8px; right: -8px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+    background: var(--accent); color: #2a1a00; font-size: .75rem; font-weight: 700; line-height: 22px; text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,.45); font-variant-numeric: tabular-nums;
+  }
+  .ib { width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+  .ib svg { width: 17px; height: 17px; }
+  .arrow { width: 38px; height: 38px; min-height: 0; padding: 0; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .arrow:disabled { opacity: .32; }
+  @media (prefers-reduced-motion: reduce) {
+    .big:active:not(:disabled), .ib:active, .arrow:active:not(:disabled) { transform: none; }
+  }
+  .overlay {
+    position: absolute; inset: 0; display: none; overflow: auto;
+    background: rgba(12, 14, 30, .74); border-radius: 14px; text-align: center; padding: 12px; z-index: 2;
+  }
+  .overlay.show { display: flex; }
+  .card { margin: auto; background: var(--panel); border-radius: 14px; padding: 18px 20px; max-width: 330px; box-shadow: 0 12px 36px rgba(0,0,0,.4); }
+  .card h2 { margin: 0 0 6px; color: var(--accent); font-size: 1.3rem; }
+  .card p { margin: 4px 0 12px; color: var(--muted); line-height: 1.45; font-size: .92rem; }
+  .card ul { text-align: left; margin: 0 0 14px; padding-left: 18px; color: var(--muted); line-height: 1.5; font-size: .9rem; }
+  .card li b { color: var(--text); }
+  .stars { font-size: 1.8rem; letter-spacing: 4px; margin: 2px 0 6px; color: #4a5190; }
+  .stars .on { color: var(--accent); text-shadow: 0 0 10px rgba(255,200,87,.6); }
+  @media (max-width: 380px), (max-height: 680px) { .card { padding: 14px 14px; } .card ul { font-size: .84rem; line-height: 1.4; margin-bottom: 10px; } }
+  /* How-to-play card */
+  .card.help { max-width: 360px; width: 100%; padding: 20px 20px 18px; text-align: left;
+    background: linear-gradient(180deg, #2a3063 0%, var(--panel) 60%); border: 1px solid rgba(124,134,218,.28); }
+  .card.help h2 { text-align: center; font-size: 1.4rem; margin: 0; text-shadow: 0 0 14px rgba(255,200,87,.35); }
+  .help-lead { text-align: center; margin: 2px 0 14px !important; color: var(--text) !important; opacity: .85; }
+  .steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; counter-reset: step; }
+  .steps li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 12px;
+    background: rgba(20,23,43,.45); color: var(--muted); font-size: .9rem; line-height: 1.35; }
+  .steps li b { color: var(--text); }
+  .steps li span { display: block; font-size: .8rem; opacity: .85; margin-top: 2px; }
+  .step-ico { width: 44px; height: 44px; flex: 0 0 44px; }
+  .step-ico .spin { transform-origin: 24px 24px; animation: tileTurn 3.2s ease-in-out infinite; }
+  @keyframes tileTurn { 0%, 30% { transform: rotate(0deg); } 45%, 100% { transform: rotate(90deg); } }
+  .help-tips { border-top: 1px solid rgba(124,134,218,.22); padding-top: 10px; margin-bottom: 14px; }
+  .help-tips p { margin: 0 0 6px !important; font-size: .8rem !important; line-height: 1.4 !important; text-align: center; }
+  .help-tips .keys { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 6px; margin: 0 !important; }
+  kbd { font: 600 .72rem/1 system-ui, sans-serif; color: var(--text); background: var(--btn); border: 1px solid #4a5190;
+    border-bottom-width: 2px; border-radius: 5px; padding: 3px 6px; }
+  @media (hover: none) and (pointer: coarse) { .help-tips .keys { display: none; } }
+  .help-play { display: block; width: 100%; padding: 11px 0; font-size: 1rem; border-radius: 10px; }
+  @media (max-width: 380px), (max-height: 680px) {
+    .card.help { padding: 14px 12px 12px; }
+    .help-lead { margin-bottom: 8px !important; }
+    .steps { gap: 6px; margin-bottom: 10px; }
+    .steps li { padding: 6px 8px; font-size: .84rem; gap: 10px; }
+    .step-ico { width: 36px; height: 36px; flex-basis: 36px; }
+    .help-tips { padding-top: 8px; margin-bottom: 10px; }
+  }
+  @media (max-height: 680px) {
+    .help-lead { display: none; }
+    .card.help h2 { margin-bottom: 8px; font-size: 1.2rem; }
+    .steps li { padding: 5px 8px; line-height: 1.3; }
+    .steps li span { font-size: .76rem; margin-top: 1px; }
+    .step-ico { width: 32px; height: 32px; flex-basis: 32px; }
+    .help-play { padding: 9px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .step-ico .spin { animation: none; } }
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  footer { font-size: .75rem; color: var(--muted); padding: 2px 16px 10px; text-align: center; }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .toast {
+    position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); z-index: 3;
+    background: var(--panel); color: var(--text); font-size: .85rem; line-height: 1.35; text-align: center;
+    padding: 8px 14px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  .toast.show { opacity: 1; }
+  button svg { display: block; width: 18px; height: 18px; flex: none; color: var(--accent); }
+  #resetBtn.armed, #resetBtn.armed:hover { background: var(--accent2); border-color: #ffb27a; color: #2a1a00; }
+  #resetBtn.armed svg { color: #2a1a00; }
+  .stars span { display: inline-block; animation: starIn .35s ease-out both; }
+  .stars span:nth-child(2) { animation-delay: .18s; }
+  .stars span:nth-child(3) { animation-delay: .36s; }
+  @keyframes starIn { from { opacity: 0; transform: scale(.3); } 60% { opacity: 1; transform: scale(1.25); } to { opacity: 1; transform: scale(1); } }
+  canvas.fadein { animation: boardIn .2s ease-out; }
+  @keyframes boardIn { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  @media (max-height: 520px) { footer { display: none; } header { padding-top: 6px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="titlerow">
+    <button class="ib" id="soundBtn" title="Sound on/off" aria-label="Sound" aria-pressed="true"></button>
+    <h1 id="title" class="logo"><svg class="logo-svg" viewBox="4 9 422 84" role="img" aria-label="Lantern Links" focusable="false"><defs><radialGradient id="ll-glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ffc857" stop-opacity=".6"/><stop offset="1" stop-color="#ffc857" stop-opacity="0"/></radialGradient><linearGradient id="ll-glass" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffd98a"/><stop offset=".5" stop-color="#fff6d8"/><stop offset="1" stop-color="#f5b942"/></linearGradient><linearGradient id="ll-ice" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b3bcff"/></linearGradient><linearGradient id="ll-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6c9"/><stop offset=".45" stop-color="#ffd166"/><stop offset="1" stop-color="#f08a1c"/></linearGradient><filter id="ll-soft" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="7"/></filter><path id="ll-w1" d="M78.6 73.3Q76.1 73.3 75 72.5Q73.9 71.8 73.7 70.6Q73.5 69.4 73.5 68.2L73.5 39.2Q73.5 38 73.7 36.8Q73.9 35.6 75 34.9Q76.1 34.1 78.7 34.1Q81.2 34.1 82.3 34.9Q83.3 35.6 83.5 36.8Q83.7 38 83.7 39.3L83.7 64.6L97.4 64.6Q98.5 64.6 99.5 64.7Q100.4 64.9 101.1 65.8Q101.7 66.8 101.7 68.9Q101.7 71.1 101.1 72Q100.4 72.9 99.4 73.1Q98.4 73.3 97.4 73.3ZM127 73.2Q124.5 73.2 123.3 72.4Q122.1 71.5 122.1 70.4L122.9 70.4Q122.6 70.8 121.8 71.5Q121 72.1 119.6 72.7Q118.3 73.2 116.3 73.2Q113.8 73.2 111.5 72Q109.2 70.9 107.4 68.9Q105.5 66.9 104.5 64.3Q103.4 61.8 103.4 59Q103.4 56.2 104.5 53.7Q105.5 51.2 107.4 49.2Q109.2 47.2 111.5 46.1Q113.8 44.9 116.3 44.9Q118.2 44.9 119.6 45.5Q120.9 46 121.7 46.7Q122.5 47.4 122.8 47.8L122.2 47.8Q122.1 46.4 123.3 45.6Q124.5 44.9 127 44.9Q129.6 44.9 130.6 45.6Q131.6 46.4 131.9 47.5Q132.1 48.7 132.1 50L132.1 68.2Q132.1 69.4 131.9 70.6Q131.6 71.7 130.6 72.5Q129.6 73.2 127 73.2ZM117.7 63.1Q118.8 63.1 119.7 62.5Q120.5 61.9 121.1 61Q121.6 60.1 121.6 59Q121.6 57.9 121.1 57Q120.5 56.1 119.6 55.6Q118.7 55 117.6 55Q116.5 55 115.6 55.6Q114.7 56.1 114.1 57Q113.5 58 113.5 59.1Q113.5 60.1 114.1 61Q114.7 61.9 115.7 62.5Q116.6 63.1 117.7 63.1ZM140.5 73.2Q138 73.2 136.9 72.5Q135.8 71.7 135.6 70.6Q135.4 69.4 135.4 68.2L135.4 49.7Q135.4 48.5 135.7 47.4Q135.9 46.3 136.9 45.6Q138 44.9 140.5 44.9Q142.8 44.9 143.9 45.4Q144.9 46 145.2 46.9Q145.5 47.7 145.4 48.4Q145.4 49.1 145.5 49.3L145.1 49.6Q145 48.8 145.7 47.9Q146.4 47.1 147.6 46.4Q148.7 45.7 150 45.3Q151.3 44.9 152.5 44.9Q155.3 44.9 157.4 45.9Q159.6 47 161 48.9Q162.4 50.8 163.2 53.4Q163.9 56 163.9 59L163.9 68.2Q163.9 69.4 163.7 70.6Q163.4 71.8 162.4 72.5Q161.4 73.2 158.8 73.2Q156.2 73.2 155.1 72.5Q154.1 71.7 153.9 70.6Q153.6 69.4 153.6 68.2L153.6 59Q153.6 57.7 153.2 56.8Q152.7 55.9 151.8 55.5Q150.9 55 149.7 55Q148.4 55 147.5 55.5Q146.6 56 146.1 56.9Q145.6 57.8 145.6 59L145.6 68.2Q145.6 69.4 145.3 70.6Q145.1 71.8 144.1 72.5Q143.1 73.2 140.5 73.2ZM181.8 73.3Q178.8 73.3 176.7 72.6Q174.5 72 173 70.6Q171.6 69.2 170.9 67Q170.2 64.9 170.2 62L170.2 40.3Q170.2 39 170.4 37.9Q170.7 36.8 171.7 36.1Q172.8 35.4 175.3 35.4Q177.8 35.4 178.8 36.2Q179.9 37 180.1 38.1Q180.3 39.3 180.3 40.5L180.3 61.5Q180.3 62.2 180.4 62.6Q180.5 63 180.7 63.2Q180.9 63.4 181.1 63.6Q181.4 63.7 181.9 63.7Q183.3 63.7 184.5 63.9Q185.6 64.1 186.3 65.1Q186.9 66 186.9 68.3Q186.9 70.8 186.1 71.8Q185.3 72.9 184.2 73.1Q183 73.3 181.8 73.3ZM169 45.2L175.6 45.2L183.3 44.9Q184.5 44.9 185.7 45.1Q186.8 45.4 187.6 46.4Q188.4 47.5 188.4 50.1Q188.4 52.4 187.6 53.5Q186.8 54.5 185.7 54.8Q184.5 55.1 183.3 55.1L176.1 54.9L168.8 54.9Q166.9 54.8 166.2 53.7Q165.5 52.6 165.5 50Q165.5 47.6 166.3 46.4Q167.2 45.2 169 45.2ZM205 73.9Q200.8 73.9 197.9 72.5Q195 71.2 193.2 69Q191.4 66.8 190.6 64.2Q189.8 61.6 189.8 59.2Q189.8 54.8 191.7 51.4Q193.7 48 197.1 46.1Q200.6 44.2 205.1 44.2Q208.6 44.2 211 45.4Q213.5 46.5 215 48.2Q216.6 50 217.3 51.9Q218 53.9 218 55.6Q218 58.7 216.5 60.4Q214.9 62.1 212.4 62.1L200.5 62.1Q200.7 63 201.4 63.6Q202.1 64.3 203.2 64.7Q204.3 65 205.5 65Q206.7 65 207.7 64.9Q208.6 64.7 209.3 64.5Q210 64.3 210.6 64.1Q211.2 63.8 211.7 63.7Q212.2 63.6 212.6 63.6Q213.6 63.6 214.5 64.2Q215.3 64.9 216 66.2Q216.4 67 216.5 67.6Q216.7 68.3 216.7 68.8Q216.7 70.5 215.3 71.6Q213.9 72.7 211.4 73.3Q208.8 73.9 205 73.9ZM200.5 56.8L206.8 56.8Q207.6 56.8 207.9 56.5Q208.3 56.2 208.3 55.5Q208.3 54.8 207.9 54.3Q207.5 53.8 206.7 53.5Q206 53.3 205 53.3Q203.6 53.3 202.6 53.8Q201.6 54.3 201.1 55.1Q200.6 55.9 200.5 56.8ZM225.6 73.3Q223.1 73.3 222 72.5Q220.9 71.8 220.8 70.6Q220.6 69.4 220.6 68.2L220.6 49.9Q220.6 48.6 220.8 47.5Q221 46.3 222.1 45.6Q223.1 44.9 225.7 44.9Q228.1 44.9 229.2 45.5Q230.2 46.2 230.4 47Q230.6 47.8 230.6 48.3L229.7 47.9Q229.7 47.9 230.2 47.4Q230.6 46.9 231.5 46.3Q232.4 45.6 233.6 45.1Q234.8 44.6 236.3 44.6Q236.8 44.6 237.6 44.7Q238.3 44.7 239.2 45Q240 45.2 240.8 45.6Q241.6 46.1 242 46.8Q242.5 47.5 242.5 48.6Q242.5 51.4 241.3 53.4Q240.1 55.3 238.1 55.3Q237.1 55.3 236.6 55.2Q236.2 55 236 54.9Q235.8 54.8 235.5 54.6Q235.3 54.5 234.6 54.5Q233.8 54.5 233.1 54.7Q232.4 54.9 231.8 55.3Q231.3 55.7 231 56.2Q230.7 56.7 230.7 57.3L230.7 68.3Q230.7 69.5 230.5 70.7Q230.3 71.8 229.2 72.6Q228.2 73.3 225.6 73.3ZM249.8 73.2Q247.3 73.2 246.2 72.5Q245.1 71.7 244.9 70.6Q244.7 69.4 244.7 68.2L244.7 49.7Q244.7 48.5 245 47.4Q245.2 46.3 246.3 45.6Q247.3 44.9 249.8 44.9Q252.1 44.9 253.2 45.4Q254.2 46 254.5 46.9Q254.8 47.7 254.7 48.4Q254.7 49.1 254.8 49.3L254.4 49.6Q254.3 48.8 255 47.9Q255.7 47.1 256.9 46.4Q258 45.7 259.3 45.3Q260.7 44.9 261.8 44.9Q264.6 44.9 266.8 45.9Q268.9 47 270.3 48.9Q271.7 50.8 272.5 53.4Q273.2 56 273.2 59L273.2 68.2Q273.2 69.4 273 70.6Q272.7 71.8 271.7 72.5Q270.7 73.2 268.1 73.2Q265.5 73.2 264.5 72.5Q263.4 71.7 263.2 70.6Q262.9 69.4 262.9 68.2L262.9 59Q262.9 57.7 262.5 56.8Q262 55.9 261.1 55.5Q260.3 55 259 55Q257.7 55 256.8 55.5Q255.9 56 255.4 56.9Q254.9 57.8 254.9 59L254.9 68.2Q254.9 69.4 254.7 70.6Q254.4 71.8 253.4 72.5Q252.4 73.2 249.8 73.2Z"/><path id="ll-w2" d="M295.8 73.3Q293.3 73.3 292.2 72.5Q291.2 71.8 290.9 70.6Q290.7 69.4 290.7 68.2L290.7 39.2Q290.7 38 290.9 36.8Q291.2 35.6 292.2 34.9Q293.3 34.1 295.9 34.1Q298.5 34.1 299.5 34.9Q300.5 35.6 300.7 36.8Q301 38 301 39.3L301 64.6L314.6 64.6Q315.7 64.6 316.7 64.7Q317.7 64.9 318.3 65.8Q318.9 66.8 318.9 68.9Q318.9 71.1 318.3 72Q317.6 72.9 316.6 73.1Q315.6 73.3 314.6 73.3ZM326.8 73.3Q324.3 73.3 323.2 72.5Q322.1 71.8 321.9 70.6Q321.7 69.4 321.7 68.2L321.7 50Q321.7 48.7 322 47.6Q322.2 46.4 323.3 45.7Q324.3 44.9 326.8 44.9Q329.4 44.9 330.4 45.7Q331.4 46.4 331.7 47.6Q331.9 48.8 331.9 50.1L331.9 68.3Q331.9 69.5 331.7 70.7Q331.4 71.8 330.4 72.6Q329.4 73.3 326.8 73.3ZM326.8 42.2Q324.3 42.2 323.2 41.4Q322.1 40.7 321.9 39.5Q321.7 38.3 321.7 37.1Q321.7 35.8 322 34.6Q322.2 33.5 323.3 32.8Q324.3 32 326.8 32Q329.4 32 330.4 32.8Q331.4 33.5 331.7 34.7Q331.9 35.9 331.9 37.1Q331.9 38.4 331.7 39.5Q331.4 40.7 330.4 41.4Q329.4 42.2 326.8 42.2ZM340.6 73.2Q338 73.2 337 72.5Q335.9 71.7 335.7 70.6Q335.5 69.4 335.5 68.2L335.5 49.7Q335.5 48.5 335.7 47.4Q336 46.3 337 45.6Q338.1 44.9 340.6 44.9Q342.9 44.9 344 45.4Q345 46 345.3 46.9Q345.5 47.7 345.5 48.4Q345.5 49.1 345.6 49.3L345.2 49.6Q345.1 48.8 345.8 47.9Q346.5 47.1 347.6 46.4Q348.8 45.7 350.1 45.3Q351.4 44.9 352.6 44.9Q355.4 44.9 357.5 45.9Q359.7 47 361.1 48.9Q362.5 50.8 363.2 53.4Q364 56 364 59L364 68.2Q364 69.4 363.7 70.6Q363.5 71.8 362.5 72.5Q361.5 73.2 358.9 73.2Q356.3 73.2 355.2 72.5Q354.2 71.7 353.9 70.6Q353.7 69.4 353.7 68.2L353.7 59Q353.7 57.7 353.2 56.8Q352.8 55.9 351.9 55.5Q351 55 349.7 55Q348.5 55 347.6 55.5Q346.7 56 346.2 56.9Q345.7 57.8 345.7 59L345.7 68.2Q345.7 69.4 345.4 70.6Q345.2 71.8 344.2 72.5Q343.1 73.2 340.6 73.2ZM391.5 64.1Q393.5 65.9 393.7 67.6Q393.8 69.2 391.8 71.3Q390.3 72.9 389.2 73.4Q388.1 73.9 387 73.4Q386 72.9 384.5 71.6L377.6 65.2L377.6 68.3Q377.6 69.5 377.4 70.7Q377.2 71.8 376.2 72.6Q375.1 73.3 372.5 73.3Q370 73.3 369 72.5Q367.9 71.8 367.7 70.6Q367.5 69.4 367.5 68.2L367.5 37Q367.5 35.7 367.7 34.6Q367.9 33.4 369 32.7Q370.1 31.9 372.6 31.9Q375.1 31.9 376.2 32.7Q377.2 33.4 377.4 34.6Q377.6 35.8 377.6 37.1L377.6 52.5L382.4 47.9Q383.7 46.6 384.9 46.1Q386.1 45.6 387.2 46.1Q388.4 46.5 389.7 47.9Q391.9 50.2 391.8 51.7Q391.7 53.1 389.7 55.2L385.1 59.1ZM406.5 73.8Q404.9 73.8 403 73.4Q401 73.1 399.2 72.4Q397.4 71.7 396.2 70.7Q395.1 69.8 395.1 68.5Q395.1 68 395.3 67.3Q395.6 66.6 396 65.7Q396.5 64.9 397.1 64Q397.5 63.4 398 63.1Q398.6 62.8 399.3 62.8Q400.3 62.8 401.3 63.3Q402.2 63.7 403.2 64.2Q404.1 64.7 405.2 65.2Q406.2 65.6 407.4 65.6Q408.4 65.6 409 65.4Q409.5 65.1 409.5 64.7Q409.5 64.2 409.1 64Q408.8 63.7 408.1 63.5Q407.5 63.3 406.6 63.1Q405.8 62.9 404.9 62.7Q403.9 62.5 402.9 62.2Q401.6 61.8 400.4 61.1Q399.1 60.5 398.2 59.4Q397.2 58.4 396.6 56.8Q396 55.3 396 53.1Q396 50.2 397.3 48.3Q398.7 46.3 401.3 45.3Q404 44.3 407.8 44.3Q408.8 44.3 409.7 44.4Q410.7 44.5 411.7 44.7Q412.6 45 413.6 45.3Q414.6 45.7 415.6 46.1Q417.7 47 417.7 48.6Q417.8 50.2 416.6 52Q415.9 53 415.2 53.6Q414.5 54.1 413.8 54.1Q412.9 54.1 411.8 53.6Q410.7 53.1 409.6 52.6Q408.4 52.1 407.2 52.1Q406.5 52.1 406.1 52.2Q405.6 52.4 405.4 52.6Q405.1 52.9 405.1 53.2Q405.1 53.8 405.6 54.2Q406 54.5 406.7 54.8Q407.4 55 408.3 55.2Q409.2 55.3 410.3 55.5Q411.7 55.7 413.3 56.2Q414.8 56.7 416.1 57.6Q417.4 58.5 418.2 60Q419 61.6 419 64.1Q419 68.9 415.8 71.3Q412.6 73.8 406.5 73.8Z"/></defs><g transform="translate(6 11.4) scale(1.56)"><circle cx="20" cy="30" r="20" fill="url(#ll-glow)"/><path d="M15 6a5 5 0 0 1 10 0" fill="none" stroke="#ffc857" stroke-width="2.6" stroke-linecap="round"/><rect x="12" y="8" width="16" height="5" rx="2" fill="#ffc857"/><rect x="9" y="14" width="22" height="26" rx="8" fill="url(#ll-glass)" stroke="#ffc857" stroke-width="2.6"/><path d="M20 21c3 4 5 6 5 9a5 5 0 0 1-10 0c0-3 2-5 5-9z" fill="#ff9d2e"/><path d="M20 26c1.6 2 2.4 3 2.4 4.6a2.4 2.4 0 0 1-4.8 0c0-1.6.8-2.6 2.4-4.6z" fill="#fff3cf"/><rect x="13" y="41" width="14" height="4.5" rx="2" fill="#ffc857"/></g><g fill="#ffc857" opacity=".35" filter="url(#ll-soft)" transform="translate(0 4)"><use href="#ll-w1"/><use href="#ll-w2"/></g><g fill="#0a0d22" stroke="#0a0d22" stroke-width="8.6" stroke-linejoin="round" opacity=".55" transform="translate(2 5)"><use href="#ll-w1"/><use href="#ll-w2"/></g><g stroke-width="7.8" stroke-linejoin="round" paint-order="stroke"><use href="#ll-w1" fill="url(#ll-ice)" stroke="#232a6b"/><use href="#ll-w2" fill="url(#ll-gold)" stroke="#6b3a0c"/></g></svg></h1>
+    <div class="ibs">
+      <button class="ib" id="helpBtn" title="How to play" aria-label="How to play"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5c3-1.2 6.2-1 9.5 1 3.3-2 6.5-2.2 9.5-1v13c-3-1.2-6.2-1-9.5 1-3.3-2-6.5-2.2-9.5-1z"/><path d="M12 6.5v13"/></svg></button>
+      <button class="ib" id="fsBtn" title="Full screen" aria-label="Full screen" hidden></button>
+    </div>
+  </div>
+  <div class="levelbar">
+    <button class="arrow" id="prevBtn" title="Previous level" aria-label="Previous level"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="lvinfo"><span class="lvtxt">Level <b id="lvl">1</b></span><span class="lvstars" id="lvStars" role="img" aria-label="No stars yet"></span></div>
+    <button class="arrow" id="skipBtn" title="Solve this level first" aria-label="Next level" disabled><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+  </div>
+  <div class="stats" aria-live="polite">
+    <div>Moves <b><span id="moves">0</span><small>/<span id="par">0</span></small></b></div>
+    <div>Lit <b id="lit">0/0</b></div>
+    <div>Time <b id="time">0:00</b></div>
+  </div>
+</header>
+<main id="main">
+  <div id="wrap">
+    <canvas id="board" tabindex="0" aria-label="Puzzle board. Arrow keys move, Space or Enter rotates, Z undoes."></canvas>
+    <div class="overlay" id="winOv" role="dialog" aria-modal="true" aria-labelledby="winTitle">
+      <div class="card">
+        <h2 id="winTitle">Whole board lit!</h2>
+        <div class="stars" id="stars" aria-hidden="true"></div>
+        <p id="winText"></p>
+        <div class="row">
+          <button id="replayBtn">Replay</button>
+          <button class="primary" id="nextBtn">Next level</button>
+        </div>
+      </div>
+    </div>
+    <div class="overlay" id="helpOv" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="card help">
+        <h2 id="helpTitle">How to play</h2>
+        <p class="help-lead">Light up the whole board.</p>
+        <ol class="steps">
+          <li>
+            <svg class="step-ico" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+              <rect x="4" y="4" width="40" height="40" rx="9" fill="#2a3063"/>
+              <g class="spin"><path d="M24 4 V24 H44" fill="none" stroke="#7c86da" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+              <circle cx="24" cy="24" r="5" fill="#ffc857"/>
+            </svg>
+            <div><b>Tap a tile</b> to turn it.<span>Right-click or long-press turns it back.</span></div>
+          </li>
+          <li>
+            <svg class="step-ico" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+              <rect x="4" y="4" width="40" height="40" rx="9" fill="#2a3063"/>
+              <path d="M13 24 H33" stroke="#ffc857" stroke-width="6" stroke-linecap="round"/>
+              <circle cx="13" cy="24" r="7" fill="#fff3cf" stroke="#ff9d2e" stroke-width="2.5"/>
+              <rect x="30" y="16" width="10" height="16" rx="3" fill="#ffd98a" stroke="#b8791a" stroke-width="2"/>
+              <rect x="32" y="13" width="6" height="3" rx="1" fill="#b8791a"/>
+              <circle cx="35" cy="24" r="2.6" fill="#fffbea"/>
+            </svg>
+            <div><b>Carry the light</b> from the glowing core to every lantern.</div>
+          </li>
+          <li>
+            <svg class="step-ico" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+              <rect x="4" y="4" width="19" height="19" rx="5" fill="#373e7a"/><rect x="25" y="4" width="19" height="19" rx="5" fill="#373e7a"/>
+              <rect x="4" y="25" width="19" height="19" rx="5" fill="#373e7a"/><rect x="25" y="25" width="19" height="19" rx="5" fill="#373e7a"/>
+              <path d="M13.5 34.5 V13.5 H34.5 V34.5" fill="none" stroke="#ffc857" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <div><b>Light every tile</b> to finish.<span>No loops, no loose ends.</span></div>
+          </li>
+          <li>
+            <svg class="step-ico" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+              <rect x="4" y="4" width="40" height="40" rx="9" fill="#2a3063"/>
+              <path d="M24 9 l4 8.2 9 1.3 -6.5 6.3 1.5 9 -8-4.2 -8 4.2 1.5-9 -6.5-6.3 9-1.3z" fill="#ffc857" stroke="#ff9d2e" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <div><b>Beat par</b> for three stars.<span>You get 3 undos per level.</span></div>
+          </li>
+        </ol>
+        <div class="help-tips">
+          <p>The arrows beside the level number change level. Next opens after a solve.</p>
+          <p class="keys"><kbd>Arrows</kbd> move <kbd>Space</kbd> turn <kbd>Z</kbd> undo <kbd>R</kbd> restart</p>
+        </div>
+        <button class="primary help-play" id="helpClose">Play</button>
+      </div>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+</main>
+<div class="controls">
+  <button class="big" id="undoBtn" title="Undo last move (Z). 3 per level." aria-label="Undo, 3 left"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>Undo</span><span class="badge" id="undoCount" aria-hidden="true">3</span></button>
+  <button class="big" id="resetBtn" title="Scramble this level again (R)"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/></svg><span id="resetLbl">Restart</span></button>
+</div>
+<footer>
+  An original puzzle by <a href="https://webgame.fun/" target="_blank" rel="noopener">WebGame.fun</a><span class="sep"> ·</span>
+  <a href="https://github.com/ShahriarSaeik/lantern-links" id="srcLink" target="_blank" rel="noopener">Source code</a>
+</footer>
+<script>
+(() => {
+  'use strict';
+  const VERSION = '1.8';
+  const N = 1, E = 2, S = 4, W = 8;
+  const DIRS = [
+    { bit: N, dx: 0, dy: -1, opp: S },
+    { bit: E, dx: 1, dy: 0, opp: W },
+    { bit: S, dx: 0, dy: 1, opp: N },
+    { bit: W, dx: -1, dy: 0, opp: E },
+  ];
+  const rotCW = m => ((m << 1) | (m >> 3)) & 15;
+  const rotCCW = m => ((m >> 1) | (m << 3)) & 15;
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('lanternlinks.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('lanternlinks.' + k, JSON.stringify(v)); } catch (e) {} },
+    del(k) { try { localStorage.removeItem('lanternlinks.' + k); } catch (e) {} },
+  };
+
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  const el = id => document.getElementById(id);
+  const winOv = el('winOv'), helpOv = el('helpOv');
+
+  // Undo is limited to MAX_UNDO uses per level
+  const MAX_UNDO = 3;
+  let undosLeft = MAX_UNDO;
+  let level = Math.max(1, store.get('level', 1) | 0);
+  let untouched = false, refitTimer = 0;
+  let cols = 0, rows = 0, tiles, solution, source, moves, par, anim, cursor, solved, litSet, history, solvedAt, lastLitCount;
+  let elapsed = 0, runStart = 0, started = false, solvedBefore = false, winTimer = 0, lanterns = [], booted = false;
+  const rmq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  let reduced = !!(rmq && rmq.matches);
+  let soundOn = store.get('sound', true);
+
+  function sizeFor(lv) { return Math.min(4 + Math.floor((lv - 1) / 3), 10); }
+
+  // Board shape: the tile count stays near the old square board for the level
+  // (16, 25, ... 100, up to 1.5 times that), and the columns and rows are picked
+  // so that square tiles fill the free space best. Ties go to fewer tiles.
+  function chooseShape(lv, w, h) {
+    const k = sizeFor(lv), lo = k * k, hi = Math.floor(lo * 1.5);
+    let best = null;
+    if (!(w > 0 && h > 0)) return { c: k, r: k };
+    for (let c = 3; c <= 12; c++) for (let r = 3; r <= 12; r++) {
+      if (Math.min(c, r) > 10) continue;
+      const n = c * r;
+      if (n < lo || n > hi) continue;
+      const t = Math.min(w / c, h / r), fill = n * t * t / (w * h);
+      if (!best || fill > best.fill + 0.005 || (fill > best.fill - 0.005 && n < best.n)) best = { c, r, n, fill };
+    }
+    return best || { c: k, r: k };
+  }
+
+  // Random spanning tree: one connected network with no loops, so every level is solvable.
+  // The puzzle depends only on (level, cols, rows), so Restart keeps the same layout.
+  function generate(lv, nc, nr) {
+    const rnd = mulberry32(lv * 7919 + 17);
+    cols = nc; rows = nr;
+    const n = cols;
+    const mask = new Array(cols * rows).fill(0);
+    const seen = new Array(cols * rows).fill(false);
+    source = Math.floor((rows - 1) / 2) * n + Math.floor((cols - 1) / 2);
+    const stack = [source];
+    seen[source] = true;
+    while (stack.length) {
+      const pickIdx = rnd() < 0.45 ? stack.length - 1 : Math.floor(rnd() * stack.length);
+      const cur = stack[pickIdx];
+      const x = cur % n, y = (cur / n) | 0;
+      const opts = DIRS.filter(d => {
+        const nx = x + d.dx, ny = y + d.dy;
+        return nx >= 0 && ny >= 0 && nx < cols && ny < rows && !seen[ny * n + nx];
+      });
+      if (!opts.length) { stack.splice(pickIdx, 1); continue; }
+      const d = opts[Math.floor(rnd() * opts.length)];
+      const nxt = (y + d.dy) * n + (x + d.dx);
+      mask[cur] |= d.bit;
+      mask[nxt] |= d.opp;
+      seen[nxt] = true;
+      stack.push(nxt);
+    }
+    solution = mask.slice();
+    return rnd;
+  }
+
+  // Fewest clockwise taps that turn tile m into target t
+  function tapsTo(m, t) { for (let k = 0; k < 4; k++) { if (m === t) return k; m = rotCW(m); } return 0; }
+
+  function scramble(rnd) {
+    tiles = solution.map(m => { let t = m; const r = Math.floor(rnd() * 4); for (let i = 0; i < r; i++) t = rotCW(t); return t; });
+    if (computeLit().size === tiles.length) {
+      for (let i = 0; i < tiles.length; i++) { if (rotCW(tiles[i]) !== tiles[i]) { tiles[i] = rotCW(tiles[i]); break; } }
+    }
+    par = tiles.reduce((s, m, i) => s + tapsTo(m, solution[i]), 0);
+  }
+
+  // shape: {c, r} to use, otherwise Restart keeps the current shape and a new level fits the screen
+  function startLevel(lv, reshuffle, shape, quiet) {
+    if (!shape) {
+      if (reshuffle && lv === level && cols) shape = { c: cols, r: rows };
+      else { const a = measure(); shape = chooseShape(lv, a.w, a.h); }
+    }
+    level = lv;
+    store.set('level', level);
+    store.del('cur');
+    clearTimeout(winTimer); winTimer = 0;
+    disarmRestart();
+    const rnd = generate(lv, shape.c, shape.r);
+    scramble(reshuffle ? mulberry32((Date.now() & 0x7fffffff) ^ (lv * 31)) : rnd);
+    moves = 0; solved = false; anim = {}; history = []; undosLeft = MAX_UNDO;
+    elapsed = 0; runStart = 0; started = false; solvedAt = 0;
+    solvedBefore = store.get('stars.' + lv, null) !== null;
+    lanterns = [];
+    for (let i = 0; i < solution.length; i++) if (isLantern(i)) lanterns.push(i);
+    cursor = source;
+    winOv.classList.remove('show');
+    litSet = null; litAt.clear();
+    update(true);
+    layout();
+    if (!quiet) fadeBoard();
+    untouched = true;
+  }
+
+  // While a level is untouched (no move yet, not restored from a save), a change of
+  // window size, rotation or full screen re-picks the shape that fits best.
+  // After the first move the board keeps its shape and only rescales.
+  function scheduleRefit() { clearTimeout(refitTimer); refitTimer = setTimeout(refit, 150); }
+  function refit() {
+    refitTimer = 0;
+    if (!untouched || !cols || solved || moves > 0 || history.length) return;
+    const a = measure(), sh = chooseShape(level, a.w, a.h);
+    if (sh.c === cols && sh.r === rows) return;
+    startLevel(level, false, sh, true);
+  }
+
+  // Breadth-first walk from the core; litDepth[i] is the path length from the core
+  let litDepth = [];
+  function computeLit() {
+    const n = cols, lit = new Set([source]);
+    litDepth = new Array(cols * rows).fill(0);
+    const q = [source];
+    while (q.length) {
+      const c = q.shift();
+      const x = c % n, y = (c / n) | 0;
+      for (const d of DIRS) {
+        if (!(tiles[c] & d.bit)) continue;
+        const nx = x + d.dx, ny = y + d.dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+        const nb = ny * n + nx;
+        if (lit.has(nb) || !(tiles[nb] & d.opp)) continue;
+        lit.add(nb); litDepth[nb] = litDepth[c] + 1; q.push(nb);
+      }
+    }
+    return lit;
+  }
+
+  const degree = m => (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1);
+  const isLantern = i => i !== source && degree(solution[i]) === 1;
+
+  function starsFor(m) { if (m <= par) return 3; if (m <= par + Math.ceil(par * 0.5)) return 2; return 1; }
+  function fmtTime(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+
+  // Write DOM text only when it changes
+  const textCache = {};
+  function setText(id, v) { v = String(v); if (textCache[id] !== v) { textCache[id] = v; el(id).textContent = v; } }
+
+  // Timer: counts only while the game is visible and not paused
+  function elapsedNow(now) { return elapsed + (runStart ? (now || performance.now()) - runStart : 0); }
+
+  const TURN_MS = 140, FADE_MS = 120, POP_MS = 200;
+  const litAt = new Map(); // tile -> time its light starts to fade in
+
+  function update(quiet) {
+    const prev = litSet, now = performance.now();
+    litSet = computeLit();
+    if (prev && !quiet && !reduced) {
+      // light spreads outward along the path from the core
+      let lo = Infinity, hi = 0; const fresh = [];
+      for (const i of litSet) if (!prev.has(i)) { fresh.push(i); lo = Math.min(lo, litDepth[i]); hi = Math.max(hi, litDepth[i]); }
+      if (fresh.length) {
+        const step = Math.min(35, 200 / Math.max(1, hi - lo));
+        for (const i of fresh) litAt.set(i, now + (litDepth[i] - lo) * step);
+        animUntil = Math.max(animUntil, now + (hi - lo) * step + POP_MS);
+      }
+    }
+    for (const i of litAt.keys()) if (!litSet.has(i)) litAt.delete(i);
+    setText('lvl', level);
+    setText('moves', moves);
+    setText('par', par);
+    setText('lit', litSet.size + '/' + tiles.length);
+    el('prevBtn').disabled = level <= 1;
+    paintUndo();
+    let won = false;
+    if (!solved && litSet.size === tiles.length) {
+      won = true; solved = true; solvedBefore = true; solvedAt = now;
+      if (runStart) { elapsed += now - runStart; runStart = 0; }
+      if (!reduced) animUntil = Math.max(animUntil, now + ((cols + rows) * 0.07 + 0.6) * 1000);
+      store.del('cur'); disarmRestart();
+      el('undoBtn').disabled = true;
+      const st = starsFor(moves), mv = moves, tm = elapsed;
+      const best = store.get('best.' + level, null);
+      if (best === null || moves < best) store.set('best.' + level, moves);
+      const bestStars = Math.max(st, store.get('stars.' + level, 0));
+      store.set('stars.' + level, bestStars);
+      if (!quiet) {
+        sfx('win');
+        if (navigator.vibrate && navigator.userActivation && navigator.userActivation.hasBeenActive) { try { navigator.vibrate(40); } catch (e) {} }
+      }
+      clearTimeout(winTimer);
+      winTimer = setTimeout(() => {
+        winTimer = 0;
+        el('stars').innerHTML = [1, 2, 3].map(k => '<span class="' + (k <= st ? 'on' : '') + '">★</span>').join('');
+        el('winText').textContent = mv + ' move' + (mv === 1 ? '' : 's') + ' (par ' + par + ') in ' + fmtTime(tm) +
+          '. Best on this level: ' + (b => b + ' move' + (b === 1 ? '' : 's'))(Math.min(mv, best === null ? mv : best)) + '.';
+        winOv.classList.add('show');
+        el('nextBtn').focus();
+      }, 900);
+    } else if (!quiet && !solved && litSet.size > lastLitCount) sfx('link');
+    lastLitCount = litSet.size;
+    const skip = el('skipBtn'), canNext = solved || solvedBefore;
+    skip.disabled = !canNext;
+    const tip = canNext ? 'Next level' : 'Solve this level first';
+    if (skip.title !== tip) skip.title = tip;
+    paintLevelStars();
+    wake();
+    return won;
+  }
+
+  function rotate(i, dir, fromUndo) {
+    if (solved || i < 0 || helpOv.classList.contains('show')) return;
+    const before = tiles[i];
+    tiles[i] = dir > 0 ? rotCW(before) : rotCCW(before);
+    if (tiles[i] === before) return; // a full cross looks the same every way
+    untouched = false;
+    if (!started) { started = true; if (!paused) runStart = performance.now(); }
+    if (fromUndo) { moves = Math.max(0, moves - 1); } else { moves++; history.push({ i, dir }); }
+    if (!reduced) {
+      const t0 = performance.now();
+      anim[i] = { from: dir > 0 ? -Math.PI / 2 : Math.PI / 2, t0 };
+      animUntil = Math.max(animUntil, t0 + TURN_MS);
+    }
+    // the winning move plays only the win sound
+    if (!update()) sfx('turn');
+    saveCur();
+  }
+
+  // Undo button: a badge shows the uses left; at 0 it is dimmed but a tap still explains why
+  function paintUndo() {
+    const b = el('undoBtn'), out = undosLeft <= 0;
+    b.disabled = solved || (!history.length && !out);
+    b.classList.toggle('dim', out);
+    if (out) b.setAttribute('aria-disabled', 'true'); else b.removeAttribute('aria-disabled');
+    setText('undoCount', undosLeft);
+    const lbl = 'Undo, ' + undosLeft + ' left';
+    if (b.getAttribute('aria-label') !== lbl) b.setAttribute('aria-label', lbl);
+  }
+  // Stars earned on this level, shown in the level bar
+  let starsKey = '';
+  function paintLevelStars() {
+    const n = Math.max(0, Math.min(3, store.get('stars.' + level, 0) | 0)), key = level + ':' + n;
+    if (key === starsKey) return;
+    starsKey = key;
+    const s = el('lvStars');
+    s.innerHTML = [1, 2, 3].map(k => k <= n ? '<span class="on">★</span>' : '<span>☆</span>').join('');
+    s.setAttribute('aria-label', n ? n + ' of 3 stars' : 'No stars yet');
+  }
+
+  const NO_UNDO = 'No undos left. Restart gives you 3 more.';
+  function undo() {
+    if (solved || helpOv.classList.contains('show')) return;
+    if (undosLeft <= 0) { toast(NO_UNDO); return; }
+    if (!history.length) return;
+    const h = history.pop(); undosLeft--; rotate(h.i, -h.dir, true);
+    if (undosLeft === 0) toast(NO_UNDO);
+  }
+
+  // Small message at the bottom of the board
+  let toastTimer = 0;
+  function toast(msg, ms) {
+    const t = el('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2500);
+  }
+
+  // Restart asks once when there are moves to lose
+  let armTimer = 0;
+  function disarmRestart() {
+    clearTimeout(armTimer); armTimer = 0;
+    el('resetLbl').textContent = 'Restart'; el('resetBtn').classList.remove('armed');
+  }
+  function pressRestart() {
+    if (moves > 0 && !solved && !armTimer) {
+      el('resetLbl').textContent = 'Sure?'; el('resetBtn').classList.add('armed');
+      armTimer = setTimeout(disarmRestart, 2500);
+      return;
+    }
+    startLevel(level, true);
+  }
+
+  // Progress inside a level survives a reload
+  function saveCur() {
+    if (solved || !tiles || (!started && !history.length && undosLeft === MAX_UNDO)) return;
+    store.set('cur', { lv: level, c: cols, r: rows, t: tiles, p: par, m: moves, u: undosLeft, e: Math.round(elapsedNow()), h: history, s: started });
+  }
+  function restoreCur(c) {
+    if (!c || c.lv !== level || c.c !== cols || c.r !== rows || !Array.isArray(c.t) || c.t.length !== solution.length) return false;
+    if (!Number.isInteger(c.m) || c.m < 0 || !Number.isInteger(c.u) || c.u < 0 || c.u > MAX_UNDO || !Number.isInteger(c.p) || c.p < 0) return false;
+    for (let i = 0; i < c.t.length; i++) {
+      let m = c.t[i], ok = false;
+      if (!Number.isInteger(m)) return false;
+      for (let k = 0; k < 4 && !ok; k++) { if (m === solution[i]) ok = true; m = rotCW(m); }
+      if (!ok) return false;
+    }
+    const keep = tiles;
+    tiles = c.t.slice();
+    if (computeLit().size === tiles.length) { tiles = keep; return false; }
+    par = c.p; moves = c.m; undosLeft = c.u;
+    history = Array.isArray(c.h) ? c.h.filter(x => x && Number.isInteger(x.i) && x.i >= 0 && x.i < tiles.length && (x.dir === 1 || x.dir === -1)) : [];
+    elapsed = Math.max(0, +c.e || 0); started = !!c.s; runStart = 0;
+    if (started && !paused) runStart = performance.now();
+    litSet = null; update(true);
+    untouched = false;
+    return true;
+  }
+
+  // Sound: tiny tones made in the browser, no audio files
+  let actx = null;
+  const quietPromise = p => { if (p && p.catch) p.catch(() => {}); };
+  function sfx(kind) {
+    if (!soundOn) return;
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') quietPromise(actx.resume());
+      const now = actx.currentTime;
+      const tone = (f, t, d, v, type) => {
+        const o = actx.createOscillator(), g = actx.createGain();
+        o.type = type || 'sine'; o.frequency.value = f;
+        g.gain.setValueAtTime(0.0001, now + t); g.gain.exponentialRampToValueAtTime(v, now + t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + t + d);
+        o.connect(g).connect(actx.destination); o.start(now + t); o.stop(now + t + d + 0.02);
+      };
+      if (kind === 'turn') tone(420, 0, 0.06, 0.05, 'triangle');
+      else if (kind === 'link') tone(880, 0, 0.18, 0.06);
+      else if (kind === 'win') [523, 659, 784, 1047].forEach((f, k) => tone(f, k * 0.11, 0.35, 0.08));
+    } catch (e) {}
+  }
+
+  // Pause while the tab is hidden or the help card is open
+  let paused = false;
+  function setPaused() {
+    const p = document.hidden || helpOv.classList.contains('show');
+    if (p === paused) return;
+    paused = p;
+    const now = performance.now();
+    if (p) {
+      if (runStart) { elapsed += now - runStart; runStart = 0; }
+      if (tickId) { clearTimeout(tickId); tickId = 0; }
+      try { if (actx && actx.state === 'running') quietPromise(actx.suspend()); } catch (e) {}
+      saveCur();
+    } else {
+      if (started && !solved) runStart = now;
+      try { if (actx && actx.state === 'suspended' && soundOn) quietPromise(actx.resume()); } catch (e) {}
+      wake();
+    }
+  }
+
+  // Layout. measure() picks the page layout and returns the free space for the board;
+  // layout() sizes the board (square tiles, current cols x rows) to fit it, centred.
+  let px = 1, cell = 1;
+  const GAP = 28; // board-to-panel gap in the wide layout (matches the CSS)
+  function measure() {
+    const W = window.innerWidth, H = window.innerHeight, body = document.body;
+    // side panel layout when there is clearly more width than height
+    const land = W >= 560 && W > H * 1.25;
+    body.classList.toggle('land', land);
+    // the side panel grows a little on big screens: 210 to 260px
+    const pw = Math.round(Math.min(260, Math.max(210, W * 0.16)));
+    if (body.style.getPropertyValue('--pw') !== pw + 'px') body.style.setProperty('--pw', pw + 'px');
+    body.classList.toggle('xl', land && pw >= 240);
+    const tall = !land && H > W * 1.15;
+    document.body.classList.toggle('tall', tall);
+    let w, h;
+    if (land) {
+      // panel, gap, and at least 24px free on each side (the grid splits what is left evenly)
+      const margin = Math.max(16, Math.round(H * 0.04));
+      w = Math.min(W - pw - GAP - 48, 1300); h = Math.min(H - margin * 2, 860);
+    } else if (tall) {
+      // the board takes the full width and the height left over by the rest of the page
+      const used = document.querySelector('header').offsetHeight + document.querySelector('.controls').offsetHeight +
+        document.querySelector('footer').offsetHeight + 20;
+      w = Math.min(W - 32, 640); h = Math.min(H - used, 900);
+    } else {
+      const m = el('main');
+      const cs = getComputedStyle(m);
+      w = Math.min(m.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), 1000);
+      h = Math.min(m.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom), 760);
+    }
+    return { w: Math.max(120, Math.floor(w)), h: Math.max(120, Math.floor(h)) };
+  }
+  function layout() {
+    const a = measure();
+    if (!cols) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    // whole device pixels per tile keep the tiles square and sharp
+    const t = Math.max(Math.round(16 * dpr), Math.floor(Math.min(a.w / cols, a.h / rows) * dpr));
+    const cw = t * cols, ch = t * rows;
+    const wrap = el('wrap');
+    wrap.style.width = (cw / dpr) + 'px'; wrap.style.height = (ch / dpr) + 'px';
+    // header and buttons follow the board width in the tall and middle layouts
+    const bw = Math.round(cw / dpr) + 'px';
+    if (document.body.style.getPropertyValue('--bw') !== bw) document.body.style.setProperty('--bw', bw);
+    if (canvas.width !== cw || canvas.height !== ch || cell !== t) {
+      canvas.width = cw; canvas.height = ch;
+      scv.width = cw; scv.height = ch;
+      px = dpr; cell = t; sprites = {};
+    }
+    wake();
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+  }
+
+  // Drawing. Everything that does not move (tile backgrounds, pipes, lantern
+  // bodies, glows) is drawn once per tile size into small sprites, and the board
+  // is built into a back canvas only when something changes. Only the flames of
+  // lit lanterns animate, at a low rate.
+  const scv = document.createElement('canvas'), sctx = scv.getContext('2d');
+  let sprites = {};
+  // a sprite centred on the tile, with room around it for glow
+  function sprite(key, draw) {
+    let s = sprites[key];
+    if (!s) {
+      s = document.createElement('canvas');
+      const S = 2 * Math.ceil(cell * 0.8);
+      s.width = s.height = S;
+      const c = s.getContext('2d'); c.translate(S / 2, S / 2); draw(c);
+      sprites[key] = s;
+    }
+    return s;
+  }
+  const blit = (c, s) => c.drawImage(s, -s.width / 2, -s.height / 2);
+  // small tiles (under about 34 CSS px) get simpler drawings
+  const small = () => cell / px < 34;
+
+  // Pipes look like round tubes: a darker edge, the main colour, and a thin
+  // highlight along the upper/left side. Lit pipes get a glow baked into the sprite.
+  const PIPE = {
+    d: { edge: '#3b4390', main: '#7c86da', hi: '#aab2f5' },
+    L: { edge: '#b8791a', main: '#ffc857', hi: '#fff3cf' },
+    B: { edge: '#d9962c', main: '#fff1c2', hi: '#ffffff' },   // the wave of light after a win
+  };
+  const pipeW = () => Math.max(3 * px, cell * 0.17);
+  function arms(c, m, ox, oy) {
+    const h = cell / 2;
+    c.beginPath();
+    for (const d of DIRS) if (m & d.bit) {
+      // a horizontal arm moves its highlight up, a vertical arm moves it left
+      const sx = d.dx ? 0 : ox, sy = d.dy ? 0 : oy;
+      c.moveTo(sx, sy); c.lineTo(d.dx * h + sx, d.dy * h + sy);
+    }
+  }
+  const pipeO = () => Math.max(px, pipeW() * (small() ? 0.12 : 0.18));
+  // the glow of a lit pipe, drawn in its own pass under all pipes so tile edges do not show
+  function drawPipeGlow(c, m, tone, cap) {
+    const w = pipeW(), o = pipeO();
+    c.lineCap = 'butt'; c.lineJoin = 'round';
+    c.shadowColor = tone === 'B' ? 'rgba(255, 215, 130, .95)' : 'rgba(255, 185, 70, .75)';
+    c.shadowBlur = cell * (tone === 'B' ? 0.34 : 0.22);
+    c.strokeStyle = c.fillStyle = PIPE[tone].edge; c.lineWidth = w + 2 * o; arms(c, m, 0, 0); c.stroke();
+    if (cap) { c.beginPath(); c.arc(0, 0, w * 0.62 + o, 0, Math.PI * 2); c.fill(); }
+    c.shadowBlur = 0;
+  }
+  const glowSprite = (m, tone, cap) => sprite('g' + m + tone + (cap ? '.' : ''), c => drawPipeGlow(c, m, tone, cap));
+  function drawPipe(c, m, tone, cap) {
+    const P = PIPE[tone], w = pipeW(), o = pipeO();
+    c.lineCap = 'butt'; c.lineJoin = 'round';
+    c.strokeStyle = P.edge; c.lineWidth = w + 2 * o; arms(c, m, 0, 0); c.stroke();
+    if (cap) { c.fillStyle = P.edge; c.beginPath(); c.arc(0, 0, w * 0.62 + o, 0, Math.PI * 2); c.fill(); }
+    c.strokeStyle = P.main; c.lineWidth = w; arms(c, m, 0, 0); c.stroke();
+    if (cap) { c.fillStyle = P.main; c.beginPath(); c.arc(0, 0, w * 0.62, 0, Math.PI * 2); c.fill(); }
+    const hw = w * 0.2;
+    if (hw >= 1) {
+      const k = -w * 0.2;
+      c.globalAlpha = 0.85; c.strokeStyle = P.hi; c.lineWidth = hw;
+      arms(c, m, k, k); c.stroke();
+      if (cap) { c.fillStyle = P.hi; c.beginPath(); c.arc(-w * 0.2, -w * 0.2, w * 0.17, 0, Math.PI * 2); c.fill(); }
+      c.globalAlpha = 1;
+    }
+  }
+  // a cap where arms meet: bends, junctions and crosses (not straight pieces or stubs)
+  const needsCap = m => degree(m) >= 3 || (degree(m) === 2 && m !== 5 && m !== 10);
+  const pipeSprite = (m, tone, cap) => sprite('p' + m + tone + (cap ? '.' : ''), c => drawPipe(c, m, tone, cap));
+
+  // The core: a warm centre with a soft halo
+  function drawCore(c) {
+    const R = cell * 0.46;
+    const h = c.createRadialGradient(0, 0, cell * 0.08, 0, 0, R);
+    h.addColorStop(0, 'rgba(255, 214, 120, .55)'); h.addColorStop(1, 'rgba(255, 150, 60, 0)');
+    c.fillStyle = h; c.beginPath(); c.arc(0, 0, R, 0, Math.PI * 2); c.fill();
+    const g = c.createRadialGradient(-cell * 0.04, -cell * 0.05, 1, 0, 0, cell * 0.22);
+    g.addColorStop(0, '#fffbea'); g.addColorStop(0.45, '#ffd97a'); g.addColorStop(1, '#f59a32');
+    c.fillStyle = g; c.beginPath(); c.arc(0, 0, cell * 0.2, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#b8791a'; c.lineWidth = Math.max(px, cell * 0.02); c.stroke();
+    c.fillStyle = '#fffdf3'; c.beginPath(); c.arc(0, 0, cell * 0.075, 0, Math.PI * 2); c.fill();
+  }
+  // Soft glow behind a lit lantern
+  function drawGlow(c) {
+    const R = cell * 0.46;
+    const g = c.createRadialGradient(0, 0, 1, 0, 0, R);
+    g.addColorStop(0, 'rgba(255, 220, 140, .85)'); g.addColorStop(0.45, 'rgba(255, 180, 80, .35)'); g.addColorStop(1, 'rgba(255, 143, 63, 0)');
+    c.fillStyle = g; c.beginPath(); c.arc(0, 0, R, 0, Math.PI * 2); c.fill();
+  }
+
+  // Lanterns always stand upright; only the pipe stub under them turns, so the
+  // open side is the side where the stub reaches the tile edge.
+  const LANT = {
+    d: { glass: ['#3a4290', '#565fb8', '#2f3678'], line: '#7c86da', metal: '#4a529f' },
+    L: { glass: ['#ffd98a', '#fff6d8', '#f5b942'], line: '#ffc857', metal: '#c98a2a' },
+  };
+  function drawLantern(c, tone) {
+    const L = LANT[tone], u = cell, sm = small();
+    const lw = Math.max(px, u * (sm ? 0.022 : 0.03));
+    c.lineWidth = lw; c.strokeStyle = L.line; c.lineJoin = 'round';
+    // hanging ring
+    if (!sm) { c.beginPath(); c.arc(0, -u * 0.255, u * 0.042, 0, Math.PI * 2); c.stroke(); }
+    // cap
+    c.fillStyle = L.metal;
+    c.beginPath();
+    c.moveTo(-u * 0.09, -u * 0.215); c.lineTo(u * 0.09, -u * 0.215);
+    c.lineTo(u * 0.19, -u * 0.155); c.lineTo(-u * 0.19, -u * 0.155); c.closePath();
+    c.fill(); c.stroke();
+    // glass body with a horizontal gradient
+    const gw = u * 0.3, gh = u * 0.31, gy = -u * 0.155;
+    const g = c.createLinearGradient(-gw / 2, 0, gw / 2, 0);
+    g.addColorStop(0, L.glass[0]); g.addColorStop(0.45, L.glass[1]); g.addColorStop(1, L.glass[2]);
+    c.fillStyle = g; roundRect(c, -gw / 2, gy, gw, gh, u * 0.07); c.fill(); c.stroke();
+    // a small vertical glint
+    if (!sm) {
+      c.save(); c.globalAlpha = tone === 'L' ? 0.9 : 0.55; c.strokeStyle = '#ffffff';
+      c.lineCap = 'round'; c.lineWidth = Math.max(px, u * 0.022);
+      c.beginPath(); c.moveTo(-gw * 0.27, gy + gh * 0.22); c.lineTo(-gw * 0.27, gy + gh * 0.62); c.stroke(); c.restore();
+    }
+    // base
+    c.fillStyle = L.metal;
+    roundRect(c, -u * 0.18, gy + gh - u * 0.005, u * 0.36, u * 0.055, u * 0.02); c.fill(); c.stroke();
+  }
+  // The flame: drawn around its own base point so it can sway
+  const FLAME_Y = u => -u * 0.155 + u * 0.31 * 0.78;
+  function drawFlame(c) {
+    const u = cell, sm = small(), h = u * 0.17, w = u * 0.1;
+    const shape = (s, dy) => {
+      c.beginPath();
+      c.moveTo(0, -h * s + dy);
+      c.bezierCurveTo(w * 0.62 * s, -h * 0.45 * s + dy, w * 0.55 * s, dy, 0, dy);
+      c.bezierCurveTo(-w * 0.55 * s, dy, -w * 0.62 * s, -h * 0.45 * s + dy, 0, -h * s + dy);
+      c.fill();
+    };
+    c.fillStyle = '#ff9d2e'; shape(1, 0);
+    if (!sm) { c.fillStyle = '#fff3cf'; shape(0.55, -h * 0.04); }
+  }
+
+  let hover = -1;
+  const fxAmt = [], fxPop = [], fxPulse = [], fxAngle = [];
+  // first pass: tile backgrounds (flat colours with a subtle checker, as in 1.6)
+  function drawTileBg(c, i) {
+    const x = i % cols, y = (i / cols) | 0;
+    const focused = i === cursor && document.activeElement === canvas;
+    c.fillStyle = focused ? '#2f3670' : (i === hover && !solved ? '#272d5c' : ((x + y) % 2 ? '#20254a' : '#1d2244'));
+    c.fillRect(x * cell + px, y * cell + px, cell - 2 * px, cell - 2 * px);
+  }
+  // second pass: work out each tile's animation state and draw the glow of lit pipes
+  function drawTileGlow(c, i, now) {
+    const n = cols, x = i % n, y = (i / n) | 0;
+    const cx = (x + 0.5) * cell, cy = (y + 0.5) * cell;
+    const lit = litSet.has(i);
+    let angle = 0;
+    const a = anim[i];
+    if (a) {
+      const t = Math.min(1, (now - a.t0) / TURN_MS);
+      angle = a.from * (1 - t) * (1 - t);
+      if (t >= 1) delete anim[i];
+    }
+    // light fades in along the path, with a small pop
+    let amt = lit ? 1 : 0, pop = 1;
+    const la = litAt.get(i);
+    if (lit && la !== undefined) {
+      const t = now - la;
+      amt = Math.max(0, Math.min(1, t / FADE_MS));
+      if (t > 0 && t < POP_MS) pop = 1 + 0.12 * Math.sin(t / POP_MS * Math.PI);
+      if (t >= POP_MS) litAt.delete(i);
+    }
+    // after a win, a wave of light pulses out from the core
+    let pulse = 0;
+    if (solved && solvedAt && !reduced) {
+      const sx = source % n, sy = (source / n) | 0;
+      const dist = Math.abs(x - sx) + Math.abs(y - sy);
+      const t = (now - solvedAt) / 1000 - dist * 0.07;
+      if (t > 0 && t < 0.6) pulse = Math.sin(t / 0.6 * Math.PI);
+    }
+    fxAmt[i] = amt; fxPop[i] = pop; fxPulse[i] = pulse; fxAngle[i] = angle;
+    if (!amt) return;
+    const m = tiles[i], cap = i !== source && !isLantern(i) && needsCap(m);
+    c.save();
+    if (!angle && pop === 1) c.translate(Math.round(cx), Math.round(cy)); else c.translate(cx, cy);
+    if (angle) c.rotate(angle);
+    if (pop !== 1) c.scale(pop, pop);
+    c.globalAlpha = amt; blit(c, glowSprite(m, 'L', cap));
+    if (pulse > 0) { c.globalAlpha = pulse; blit(c, glowSprite(m, 'B', cap)); }
+    c.restore();
+  }
+  // third pass: pipes, core and unlit lanterns
+  function drawTile(c, i) {
+    const x = i % cols, y = (i / cols) | 0;
+    const cx = (x + 0.5) * cell, cy = (y + 0.5) * cell;
+    const amt = fxAmt[i], pop = fxPop[i], pulse = fxPulse[i], angle = fxAngle[i], lit = litSet.has(i);
+    const m = tiles[i], kind = i === source ? 'c' : (isLantern(i) ? 'l' : 'p');
+    const cap = kind === 'p' && needsCap(m);
+    const plain = !angle && pop === 1;
+    c.save();
+    // whole pixels when still, so the sprite copy stays sharp
+    if (plain) c.translate(Math.round(cx), Math.round(cy)); else c.translate(cx, cy);
+    if (angle) c.rotate(angle);
+    if (pop !== 1) c.scale(pop, pop);
+    if (amt < 1) blit(c, pipeSprite(m, 'd', cap));
+    if (amt > 0) { c.globalAlpha = amt; blit(c, pipeSprite(m, 'L', cap)); c.globalAlpha = 1; }
+    if (pulse > 0 && lit) { c.globalAlpha = pulse; blit(c, pipeSprite(m, 'B', cap)); c.globalAlpha = 1; }
+    if (angle) c.rotate(-angle);
+    if (kind === 'c') blit(c, sprite('core', drawCore));
+    else if (kind === 'l' && amt < 1) blit(c, sprite('lantD', cc => drawLantern(cc, 'd')));
+    c.restore();
+  }
+  // lit lanterns flicker, so they are drawn on top of the back canvas
+  function drawLitLantern(c, i, now) {
+    const amt = fxAmt[i];
+    if (!amt) return;
+    const x = i % cols, y = (i / cols) | 0, pop = fxPop[i] || 1;
+    const s1 = reduced ? 0 : Math.sin(now / 260 + i), s2 = reduced ? 0 : Math.sin(now / 170 + i * 1.7);
+    const flick = 1 + s1 * 0.05 + (fxPulse[i] || 0) * 0.4;
+    c.save();
+    c.translate((x + 0.5) * cell, (y + 0.5) * cell);
+    c.globalAlpha = amt;
+    c.save(); c.scale(flick * pop, flick * pop); blit(c, sprite('glow', drawGlow)); c.restore();
+    if (pop !== 1) c.scale(pop, pop);
+    blit(c, sprite('lantL', cc => drawLantern(cc, 'L')));
+    // the flame sways and stretches a few percent around its base
+    c.translate(0, FLAME_Y(cell));
+    if (!reduced) { c.rotate(s2 * 0.05); c.scale(1 + s1 * 0.03, 1 + s2 * 0.06); }
+    blit(c, sprite('flame', drawFlame));
+    c.restore();
+  }
+  // a full redraw of the board
+  function drawBoard(now) {
+    sctx.clearRect(0, 0, scv.width, scv.height);
+    for (let i = 0; i < tiles.length; i++) drawTileBg(sctx, i);
+    for (let i = 0; i < tiles.length; i++) drawTileGlow(sctx, i, now);
+    for (let i = 0; i < tiles.length; i++) drawTile(sctx, i);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(scv, 0, 0);
+    for (const i of lanterns) if (litSet.has(i)) drawLitLantern(ctx, i, now);
+  }
+  // idle: redraw only the lit lantern cells for the flicker
+  function drawIdle(now) {
+    for (const i of lanterns) {
+      if (!litSet.has(i)) continue;
+      const x = i % cols, y = (i / cols) | 0;
+      const x0 = Math.floor(x * cell), y0 = Math.floor(y * cell);
+      const w = Math.min(canvas.width, Math.ceil((x + 1) * cell)) - x0, h = Math.min(canvas.height, Math.ceil((y + 1) * cell)) - y0;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
+      ctx.clearRect(x0, y0, w, h);
+      ctx.drawImage(scv, x0, y0, w, h, x0, y0, w, h);
+      drawLitLantern(ctx, i, now);
+      ctx.restore();
+    }
+  }
+
+  let rafId = 0, tickId = 0, dirty = true, animUntil = 0;
+  function wake() {
+    dirty = true;
+    if (tickId) { clearTimeout(tickId); tickId = 0; }
+    if (!rafId) rafId = requestAnimationFrame(frame);
+  }
+  function frame(now) {
+    rafId = 0;
+    if (!tiles) return;
+    const animating = now < animUntil;
+    if (dirty || animating) {
+      dirty = animating; // one more full frame after an animation ends
+      drawBoard(now);
+    } else if (!reduced) drawIdle(now);
+    setText('time', fmtTime(elapsedNow(now)));
+    if (paused) return;
+    if (animating || dirty) { rafId = requestAnimationFrame(frame); return; }
+    // idle: a slow tick for the flicker and the clock, or nothing at all
+    let delay = Infinity;
+    if (!reduced && lanterns.some(i => litSet.has(i))) delay = 80;
+    if (runStart) delay = Math.min(delay, 1005 - (elapsedNow(now) % 1000));
+    if (delay < Infinity) tickId = setTimeout(() => { tickId = 0; if (!rafId) rafId = requestAnimationFrame(frame); }, delay);
+  }
+
+  function fadeBoard() {
+    if (reduced || !booted) return;
+    canvas.classList.remove('fadein'); void canvas.offsetWidth; canvas.classList.add('fadein');
+  }
+
+  // Input
+  function cellAt(ev) {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.floor((ev.clientX - r.left) / (r.width / cols));
+    const y = Math.floor((ev.clientY - r.top) / (r.height / rows));
+    if (x < 0 || y < 0 || x >= cols || y >= rows) return -1;
+    return y * cols + x;
+  }
+  // Long-press on touch turns a tile counter-clockwise
+  let lp = null, lpFired = 0, lastTouch = 0;
+  function cancelLP() { if (lp && lp.timer) clearTimeout(lp.timer); lp = null; }
+  canvas.addEventListener('touchstart', ev => {
+    lastTouch = Date.now();
+    cancelLP();
+    if (ev.touches.length !== 1) return;
+    const t = ev.touches[0], i = cellAt(t);
+    if (i < 0) return;
+    const p = { x: t.clientX, y: t.clientY, i, timer: 0 };
+    p.timer = setTimeout(() => {
+      p.timer = 0; lpFired = Date.now(); cursor = p.i; rotate(p.i, -1);
+      if (navigator.vibrate && navigator.userActivation && navigator.userActivation.hasBeenActive) { try { navigator.vibrate(15); } catch (e) {} }
+    }, 400);
+    lp = p;
+  }, { passive: true });
+  canvas.addEventListener('touchmove', ev => {
+    lastTouch = Date.now();
+    if (!lp || !lp.timer) return;
+    const t = ev.touches[0];
+    if (t && Math.hypot(t.clientX - lp.x, t.clientY - lp.y) > 10) cancelLP();
+  }, { passive: true });
+  canvas.addEventListener('touchend', ev => {
+    lastTouch = Date.now();
+    const fired = lp && !lp.timer;
+    cancelLP();
+    if (fired && ev.cancelable) ev.preventDefault(); // no click after a long-press
+  });
+  canvas.addEventListener('touchcancel', cancelLP);
+  canvas.addEventListener('click', ev => {
+    if (Date.now() - lpFired < 700) return;
+    const i = cellAt(ev); if (i >= 0) { cursor = i; rotate(i, 1); }
+  });
+  canvas.addEventListener('contextmenu', ev => {
+    ev.preventDefault();
+    if (Date.now() - lastTouch < 1000) return; // touch long-press is handled above
+    const i = cellAt(ev); if (i >= 0) { cursor = i; rotate(i, -1); }
+  });
+  canvas.addEventListener('mousemove', ev => { const h = cellAt(ev); if (h !== hover) { hover = h; wake(); } });
+  canvas.addEventListener('mouseleave', () => { if (hover !== -1) { hover = -1; wake(); } });
+  canvas.addEventListener('focus', wake);
+  canvas.addEventListener('blur', wake);
+  document.addEventListener('keydown', ev => {
+    if (helpOv.classList.contains('show')) { if (ev.key === 'Escape' || ev.key === 'Enter') { closeHelp(); ev.preventDefault(); } return; }
+    const ae = document.activeElement;
+    const onBoard = !ae || ae === canvas || ae === document.body || ae === document.documentElement;
+    if (winOv.classList.contains('show') && ev.key === 'Enter' && onBoard) { el('nextBtn').click(); ev.preventDefault(); return; }
+    const k = ev.key.toLowerCase();
+    if (k === 'z' && !ev.altKey) { undo(); ev.preventDefault(); return; }
+    if (k === 'r' && !ev.metaKey && !ev.ctrlKey && !ev.altKey) { pressRestart(); return; }
+    const n = cols; let x = cursor % n, y = (cursor / n) | 0;
+    switch (ev.key) {
+      case 'ArrowUp': y = Math.max(0, y - 1); break;
+      case 'ArrowDown': y = Math.min(rows - 1, y + 1); break;
+      case 'ArrowLeft': x = Math.max(0, x - 1); break;
+      case 'ArrowRight': x = Math.min(n - 1, x + 1); break;
+      case ' ': case 'Enter':
+        if (!onBoard) return;
+        if (ae !== canvas) canvas.focus({ preventScroll: true });
+        rotate(cursor, ev.shiftKey ? -1 : 1); ev.preventDefault(); return;
+      default: return;
+    }
+    ev.preventDefault();
+    if (ae !== canvas) canvas.focus({ preventScroll: true });
+    cursor = y * n + x;
+    wake();
+  });
+
+  function openHelp() { helpOv.classList.add('show'); helpOv.scrollTop = 0; setPaused(); el('helpClose').focus({ preventScroll: true }); }
+  function closeHelp() { helpOv.classList.remove('show'); store.set('seenHelp', true); setPaused(); canvas.focus({ preventScroll: true }); }
+  el('helpBtn').addEventListener('click', openHelp);
+  el('helpClose').addEventListener('click', closeHelp);
+  el('nextBtn').addEventListener('click', () => startLevel(level + 1, false));
+  el('replayBtn').addEventListener('click', () => startLevel(level, true));
+  el('skipBtn').addEventListener('click', () => { if (solved || solvedBefore) startLevel(level + 1, false); });
+  el('prevBtn').addEventListener('click', () => { if (level > 1) startLevel(level - 1, false); });
+  el('resetBtn').addEventListener('click', pressRestart);
+  el('undoBtn').addEventListener('click', undo);
+  const SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/>';
+  const ICON_ON = SVG + '<path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>';
+  const ICON_OFF = SVG + '<path d="M17 9.5l5 5M22 9.5l-5 5"/></svg>';
+  function paintSound() {
+    const b = el('soundBtn');
+    b.innerHTML = soundOn ? ICON_ON : ICON_OFF;
+    b.setAttribute('aria-pressed', String(soundOn));
+    b.title = soundOn ? 'Sound on (click to mute)' : 'Sound off (click to unmute)';
+  }
+  el('soundBtn').addEventListener('click', () => { soundOn = !soundOn; store.set('sound', soundOn); paintSound(); });
+  paintSound();
+  // Full screen, only where the browser allows it (not on iPhone, not in an iframe without permission)
+  const docEl = document.documentElement, fsBtn = el('fsBtn');
+  const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+  const FS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  const FS_ENTER = FS_SVG + '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>';
+  const FS_EXIT = FS_SVG + '<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg>';
+  function paintFs() {
+    const on = !!fsEl(), t = on ? 'Exit full screen' : 'Full screen';
+    fsBtn.innerHTML = on ? FS_EXIT : FS_ENTER;
+    fsBtn.title = t; fsBtn.setAttribute('aria-label', t);
+  }
+  if ((document.fullscreenEnabled || document.webkitFullscreenEnabled) && (docEl.requestFullscreen || docEl.webkitRequestFullscreen)) {
+    fsBtn.hidden = false;
+    paintFs();
+    fsBtn.addEventListener('click', () => {
+      try {
+        if (fsEl()) quietPromise(document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen());
+        else quietPromise(docEl.requestFullscreen ? docEl.requestFullscreen() : docEl.webkitRequestFullscreen());
+      } catch (e) {}
+    });
+    const onFs = () => { paintFs(); layout(); scheduleRefit(); };
+    document.addEventListener('fullscreenchange', onFs);
+    document.addEventListener('webkitfullscreenchange', onFs);
+  } else document.body.classList.add('nofs');
+  const onResize = () => { layout(); scheduleRefit(); };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+  if (window.ResizeObserver) new ResizeObserver(onResize).observe(el('main'));
+  document.addEventListener('visibilitychange', setPaused);
+  window.addEventListener('pagehide', saveCur);
+  if (rmq) {
+    const onMotion = () => { reduced = rmq.matches; anim = {}; litAt.clear(); animUntil = 0; wake(); };
+    if (rmq.addEventListener) rmq.addEventListener('change', onMotion); else if (rmq.addListener) rmq.addListener(onMotion);
+  }
+
+  const savedCur = store.get('cur', null);
+  const okDim = v => Number.isInteger(v) && v >= 3 && v <= 12;
+  if (savedCur && savedCur.lv === level && okDim(savedCur.c) && okDim(savedCur.r)) startLevel(level, false, { c: savedCur.c, r: savedCur.r });
+  else startLevel(level, false);
+  if (savedCur && restoreCur(savedCur)) saveCur();
+  if (!store.get('seenHelp', false)) helpOv.classList.add('show');
+  setPaused();
+  if (helpOv.classList.contains('show')) el('helpClose').focus({ preventScroll: true }); else canvas.focus({ preventScroll: true });
+  booted = true;
+  requestAnimationFrame(() => requestAnimationFrame(refit));
+
+  // Hooks for automated testing, only on a local copy
+  const host = location.hostname;
+  if (location.protocol === 'file:' || host === 'localhost' || host === '127.0.0.1') {
+    window.LanternLinks = {
+      // timing of a full redraw and of one idle flicker frame (local test copies only)
+      bench(n) {
+        n = n || 100;
+      const full = () => drawBoard(performance.now());
+      const idle = () => drawIdle(performance.now());
+        const flush = () => ctx.getImageData(0, 0, 1, 1);
+        full(); flush();
+        let t = performance.now(); for (let k = 0; k < n; k++) full(); flush();
+        const f = (performance.now() - t) / n;
+        idle(); flush();
+        t = performance.now(); for (let k = 0; k < n; k++) idle(); flush();
+        const d = (performance.now() - t) / n;
+        wake();
+        return { fullMs: +f.toFixed(3), idleMs: +d.toFixed(3), tiles: tiles.length, litLanterns: lanterns.filter(i => litSet.has(i)).length, canvas: canvas.width + 'x' + canvas.height, dpr: px };
+      },
+      solve() { tiles = solution.slice(); update(); },
+      taps() { return tiles.map((m, i) => tapsTo(m, solution[i])); },
+      shape() { const a = measure(); return { cols, rows, area: a, pick: chooseShape(level, a.w, a.h) }; },
+      state() { return { version: VERSION, level, cols, rows, size: cols + 'x' + rows, moves, par, solved, lit: litSet.size, total: tiles.length, undosLeft, time: Math.round(elapsedNow()), paused }; },
+    };
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!doctype html>
+<html class="no-js" ng-app="blicblockApp">
+<head>
+  <meta charset="utf-8">
+  <title ng-bind="'BlicblockJS - ' + title">BlicblockJS</title>
+  <meta name="description" content="Play the game Blicblock from The Sims 4! Play in your browser, on your tablet, or on your phone.">
+  <meta name="keywords" content="blicblock,blic,block,sims,sims 4,the sims,video game,game,javascript,tetromino,Бликблок">
+  <meta name="author" content="Sarah Vessels">
+  <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <!-- Place favicon.ico and apple-touch-icon.png in the root directory -->
+  <link href="apple-touch-icon-57x57.png" rel="apple-touch-icon" sizes="57x57">
+  <link href="apple-touch-icon-114x114.png" rel="apple-touch-icon" sizes="114x114">
+  <link href="apple-touch-icon-72x72.png" rel="apple-touch-icon" sizes="72x72">
+  <link href="apple-touch-icon-144x144.png" rel="apple-touch-icon" sizes="144x144">
+  <link href="apple-touch-icon-57x57.png" rel="apple-touch-icon" sizes="57x57">
+  <link href="apple-touch-icon-120x120.png" rel="apple-touch-icon" sizes="120x120">
+  <link href="apple-touch-icon-76x76.png" rel="apple-touch-icon" sizes="76x76">
+  <link href="apple-touch-icon-152x152.png" rel="apple-touch-icon" sizes="152x152">
+  <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+  <link rel="icon" href="favicon.ico" type="image/x-icon">
+  <!-- build:css(.) styles/vendor.css -->
+  <!-- bower:css -->
+  <link rel="stylesheet" href="bower_components/animate-css/animate.css" />
+  <link rel="stylesheet" href="bower_components/angularjs-multiselect/angular-multi-select.css" />
+  <!-- endbower -->
+  <!-- endbuild -->
+  <!-- build:css(.tmp) styles/main.css -->
+  <link rel="stylesheet" href="styles/main.css">
+  <!-- endbuild -->
+</head>
+
+<body ng-left="$broadcast('move_left')" ng-right="$broadcast('move_right')" ng-down="$broadcast('move_down')" ng-space="$broadcast('toggle_pause')" ng-tap="$broadcast('toggle_pause')">
+  <!--[if lt IE 7]>
+    <p class="browsehappy">You are using an <strong>outdated</strong> browser. Please <a href="http://browsehappy.com/">upgrade your browser</a> to improve your experience.</p>
+  <![endif]-->
+
+  <div class="container">
+    <nav class="navbar navbar-inverse" role="navigation">
+      <div class="container-fluid">
+        <div class="navbar-header">
+          <button type="button" class="navbar-toggle collapsed" ng-init="collapse.nav = true" ng-click="collapse.nav = !collapse.nav">
+            <span class="sr-only">Toggle navigation</span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+          <a class="navbar-brand" href="/">BlicblockJS</a>
+        </div>
+        <div id="site-navbar" class="collapse navbar-collapse" ng-class="{in: !collapse.nav}">
+          <ul class="nav navbar-nav">
+            <li class="visible-xs">
+              <a href="#/">Play</a>
+            </li>
+            <li>
+              <a href="#/scores">High Scores</a>
+            </li>
+            <li>
+              <a href="#/help">How to Play</a>
+            </li>
+            <li>
+              <a href="#/about">About</a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <div class="notifications" id="notifications-container" ng-controller="NotificationsCtrl">
+      <p class="alert alert-danger clearfix ng-cloak" ng-repeat="error in errors">
+        <a class="pull-right alert-link" ng-click="remove('error', error.id)">
+          <span class="glyphicon glyphicon-remove"></span>
+        </a>
+        {{error.message}}
+      </p>
+      <p class="alert alert-success clearfix ng-cloak" ng-repeat="notice in notices">
+        <a class="pull-right alert-link" ng-click="remove('notice', notice.id)">
+          <span class="glyphicon glyphicon-remove"></span>
+        </a>
+        {{notice.message}}
+      </p>
+    </div>
+
+    <div ng-view=""></div>
+  </div>
+
+  <!-- build:js(.) scripts/oldieshim.js -->
+  <!--[if lt IE 9]>
+    <script src="bower_components/es5-shim/es5-shim.js"></script>
+    <script src="bower_components/json3/lib/json3.min.js"></script>
+    <![endif]-->
+  <!-- endbuild -->
+
+  <!-- build:js(.) scripts/vendor.js -->
+  <!-- bower:js -->
+  <script src="bower_components/jquery/dist/jquery.js"></script>
+  <script src="bower_components/angular/angular.js"></script>
+  <script src="bower_components/json3/lib/json3.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/affix.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/alert.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/button.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/carousel.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/collapse.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/dropdown.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/tab.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/transition.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/scrollspy.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/modal.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/tooltip.js"></script>
+  <script src="bower_components/bootstrap-sass-official/assets/javascripts/bootstrap/popover.js"></script>
+  <script src="bower_components/angular-resource/angular-resource.js"></script>
+  <script src="bower_components/angular-cookies/angular-cookies.js"></script>
+  <script src="bower_components/angular-sanitize/angular-sanitize.js"></script>
+  <script src="bower_components/angular-animate/angular-animate.js"></script>
+  <script src="bower_components/angular-touch/angular-touch.js"></script>
+  <script src="bower_components/angular-route/angular-route.js"></script>
+  <script src="bower_components/angular-bootstrap/ui-bootstrap-tpls.js"></script>
+  <script src="bower_components/angular-local-storage/angular-local-storage.js"></script>
+  <script src="bower_components/moment/moment.js"></script>
+  <script src="bower_components/angular-moment/angular-moment.js"></script>
+  <script src="bower_components/angular-swipe/dist/angular-swipe.js"></script>
+  <script src="bower_components/angularjs-multiselect/angular-multi-select.js"></script>
+  <!-- endbower -->
+  <!-- endbuild -->
+
+  <!-- build:js({.tmp,app}) scripts/scripts.js -->
+  <script src="scripts/jquery-jvectormap-1.2.2.min.js"></script>
+  <script src="scripts/world_mill_en_map.js"></script>
+  <script src="scripts/app.js"></script>
+  <script src="scripts/models/block.js"></script>
+  <script src="scripts/directives/ngleft.js"></script>
+  <script src="scripts/directives/ngright.js"></script>
+  <script src="scripts/directives/ngdown.js"></script>
+  <script src="scripts/directives/ngspace.js"></script>
+  <script src="scripts/directives/ngtap.js"></script>
+  <script src="scripts/directives/vectormap.js"></script>
+  <script src="scripts/services/config.js"></script>
+  <script src="scripts/services/tetromino.js"></script>
+  <script src="scripts/services/country.js"></script>
+  <script src="scripts/services/score.js"></script>
+  <script src="scripts/services/notification.js"></script>
+  <script src="scripts/controllers/notifications.js"></script>
+  <script src="scripts/controllers/main.js"></script>
+  <script src="scripts/controllers/about.js"></script>
+  <script src="scripts/controllers/scores.js"></script>
+  <!-- endbuild -->
+</body>
+
+</html>

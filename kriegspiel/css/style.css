@@ -1,0 +1,729 @@
+/* css reset pnd element defaults */
+* { -moz-box-sizing: border-box; -webkit-box-sizing: border-box; box-sizing: border-box; }
+body, h1, h2, h3, div, td, input, option { font: 14px "Lucida Grande", Helvetica, Arial, sans-serif; font-style: normal; font-variant: normal; }
+body {margin:0px; min-width:920px; min-height:500px; background-color: transparent; background-image: url('http://static.krgspl.com/krgspl/img/spiel2.png'); }
+hr	{ clear:both; margin-top:5px; margin-bottom:5px; width:100% }
+h1 { color:#606060; font-size: 20px; }
+h2 { color:#606060; font-size: 18px; }
+h3 { color:#606060; font-size: 16px; }
+h4 { color:#606060; font-size: 14px; }
+ul { list-style-type:none; padding:0; margin-left:0; }
+ol { list-style-type:decimal; padding:0; margin-left:0; }
+li { font-size:12px; }
+img{ border:0px; }
+
+header {
+	padding:20px;
+	margin:0px;
+}
+
+footer {
+	clear:both;
+	padding:20px;
+	margin:0px;
+
+}
+
+article {
+	color:#000505; 
+	text-shadow: #ffffff 0px 0px 2px; 
+	background-color:rgba(255,255,255,0.44); 
+	border:1px solid rgba(255,255,255,0.505);
+	padding:12px;
+}
+
+.home > h1 {
+	text-align: center;
+	font-size:72px;
+	font-weight:bold;
+}
+
+.home > h2 {
+	text-align: center;
+	font-size:28px;
+}
+
+.home > h3 {
+	text-align: center;
+	font-size:18px;
+}
+
+article {
+	clear:both;
+}
+
+article > h2 {
+	text-align:center;
+	font-size:20px;
+	font-weight:bold;
+	margin:5px;
+}
+
+article > h3 {
+	text-align:center;
+	font-size:20px;
+	font-weight:bold;
+	margin:5px;
+}
+
+article h4 {
+	font-size:18px;
+	font-weight:normal;
+	padding-left:15px;
+	margin:5px;
+}
+
+article .content {
+	margin-left:20px;
+}
+
+p.content {
+	line-height: 24px; font-size:16px; text-align: justify; margin-right:20px;
+}
+
+.tip {
+	display:inline-block;
+	width:48%;
+	margin-top:8px;
+	margin-bottom:8px;
+	text-align:center;
+	border:1px solid #daeae7;
+	background-color:rgba(255,255,255,0.8);
+	padding:5px;
+	border-radius:6px;
+
+}
+
+header.home {
+	width:100%;
+	background-color: #fff;
+	border-bottom:2px solid #333; 
+}
+
+header.game,
+header.replay {
+	width:100%;
+	padding:5px;
+	background-color: #fff;
+	border-bottom:2px solid #333; 
+}
+
+.headerlink {
+	color:#CCC;
+}
+
+.headerlink:hover {
+	color:#606060;
+}
+
+.logolink {
+	text-decoration: none;
+	color:#606060;
+}
+
+footer.home {
+	width:100%;
+	border-top:2px solid #333;
+	padding:50px;
+	background: -moz-linear-gradient(top,  rgba(255,255,255,1) 75%, rgba(255,255,255,0) 100%); /* FF3.6+ */
+	background: -webkit-gradient(linear, left top, left bottom, color-stop(75%,rgba(255,255,255,1)), color-stop(100%,rgba(255,255,255,0))); /* Chrome,Safari4+ */
+	background: -webkit-linear-gradient(top,  rgba(255,255,255,1) 75%,rgba(255,255,255,0) 100%); /* Chrome10+,Safari5.1+ */
+	background: -o-linear-gradient(top,  rgba(255,255,255,1) 75%,rgba(255,255,255,0) 100%); /* Opera 11.10+ */
+	background: -ms-linear-gradient(top,  rgba(255,255,255,1) 75%,rgba(255,255,255,0) 100%); /* IE10+ */
+	background: linear-gradient(to bottom,  rgba(255,255,255,1) 75%,rgba(255,255,255,0) 100%); /* W3C */
+	filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#ffffff', endColorstr='#00ffffff',GradientType=0 ); /* IE6-9 */
+}
+
+footer.home > .content {
+	width:100%;
+	text-align: center;
+}
+
+.middle {
+	margin-left:auto;
+	margin-right:auto;
+	width:600px;
+}
+
+.variant {
+	display: inline-block;
+	margin:16px;
+	font-size:18px;
+	border:1px solid #ccc;
+	border-radius:10px;
+	background-color: #fff;
+	padding-left:10px; 
+	padding-right:10px;
+}
+
+.variant > a {
+	font-color:#333;
+	text-decoration: none;
+}
+
+article > .announcements {
+	margin-bottom:20px;
+}
+
+article hr {
+	border-top:1px solid #ccc;
+	border-bottom:1px solid #fff;
+	width:535px;
+}
+
+.bottomright {
+	float:right;
+	margin-top: 15px;
+	margin-right:30px;
+}
+
+.left {
+	float:left;
+	margin-right:70px;
+}
+
+.right {
+	float:right;
+	margin-right:70px;
+}
+
+.clear {
+	clear:both;
+}
+
+.hidden {
+	display:none;
+}
+
+.playnow,
+.playnow:visited,
+.action > *,
+.action > *:visited {
+	padding:10px;
+	font-size:28px;
+	border-top:2px solid #ccc;
+	border-left:2px solid #ccc;
+	border-bottom:2px solid #777;
+	border-right:2px solid #777;
+	border-radius:10px;
+	color: #fff;
+	text-shadow: #333333 1px 1px 2px;
+	background: rgb(180,227,145); /* Old browsers */
+	background: -moz-linear-gradient(top,  rgba(180,227,145,1) 0%, rgba(97,196,25,1) 50%, rgba(180,227,145,1) 100%); /* FF3.6+ */
+	background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(180,227,145,1)), color-stop(50%,rgba(97,196,25,1)), color-stop(100%,rgba(180,227,145,1))); /* Chrome,Safari4+ */
+	background: -webkit-linear-gradient(top,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* Chrome10+,Safari5.1+ */
+	background: -o-linear-gradient(top,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* Opera 11.10+ */
+	background: -ms-linear-gradient(top,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* IE10+ */
+	background: linear-gradient(to bottom,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* W3C */
+	filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#b4e391', endColorstr='#b4e391',GradientType=0 ); /* IE6-9 */
+	text-decoration: none;
+}
+
+
+
+.playnow {
+	text-align:center;
+	display:inline-block;
+	margin-top:50px;
+	margin-bottom:50px;
+	position:relative;
+	left:50%;
+	margin-left:-253px;
+	width:505px;
+}
+
+#login, #forgot {
+	margin-bottom:200px;
+}
+
+#session > h3 {
+	text-align:center;
+	font-size:20px;
+	font-weight:bold;
+	margin:5px;
+}
+
+#startform {
+	text-align:center;
+	font-size:18px;
+	margin:5px;
+}
+
+#startform > input {
+	margin-top:10px;
+	width:150px;
+}
+
+.selection {
+	display:inline-block;
+ 	text-align:center;
+	border:1px solid #daeae7;
+	background-color:rgba(255,255,255,0.8);
+	padding:10px;
+	padding-right:15px;
+	border-radius:6px;
+	margin:5px;
+}
+
+.selection > input {
+	margin-right:10px;
+}
+
+.action > *:active {
+	border-top:2px solid #777;
+	border-left:2px solid #777;
+	border-bottom:2px solid #ccc;
+	border-right:2px solid #ccc;
+	color:#eee;
+	text-shadow: #333333 1px 1px 2px;
+	text-decoration: none;
+}
+
+.starting,.waiting,.happening,.finished {
+	font-size:18px;
+	padding-top:5px;
+	padding:14px;
+	border:1px solid #ccc;
+	border-radius:10px;
+	background-color:#fff;
+}
+
+.join , .join:visited,
+.start, .start:visited  {
+	margin:0px;
+	padding-top:4px;
+	padding-bottom:4px;
+	padding-left:12px;
+	padding-right:12px;
+	font-size:18px;
+	border-top:1px solid #ccc;
+	border-left:1px solid #ccc;
+	border-bottom:1px solid #777;
+	border-right:1px solid #777;
+	border-radius:10px;
+	color: #fff;
+	text-shadow: #333333 1px 1px 2px;
+	text-decoration: none;
+	background: rgb(180,227,145); /* Old browsers */
+	background: -moz-linear-gradient(top,  rgba(180,227,145,1) 0%, rgba(97,196,25,1) 50%, rgba(180,227,145,1) 100%); /* FF3.6+ */
+	background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(180,227,145,1)), color-stop(50%,rgba(97,196,25,1)), color-stop(100%,rgba(180,227,145,1))); /* Chrome,Safari4+ */
+	background: -webkit-linear-gradient(top,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* Chrome10+,Safari5.1+ */
+	background: -o-linear-gradient(top,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* Opera 11.10+ */
+	background: -ms-linear-gradient(top,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* IE10+ */
+	background: linear-gradient(to bottom,  rgba(180,227,145,1) 0%,rgba(97,196,25,1) 50%,rgba(180,227,145,1) 100%); /* W3C */
+	filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#b4e391', endColorstr='#b4e391',GradientType=0 ); /* IE6-9 */	
+}
+
+.join:active,
+.start:active {
+	border-top:1px solid #777;
+	border-left:1px solid #777;
+	border-bottom:1px solid #ccc;
+	border-right:1px solid #ccc;
+	color:#eee;
+	text-shadow: #333333 1px 1px 2px;
+	text-decoration: none;
+}
+
+.parent > .mouseover {
+	display:none;
+}
+
+.parent:hover > .mouseover {
+	display:block;
+	position:relative;
+	top:-5px;
+}
+
+.spieler {
+	color:#333;
+	cursor:pointer;
+}
+
+.online {
+	color:green;
+	text-decoration: underline;
+}
+
+.tooltip {
+	position:absolute;
+	display:none;
+	border:1px solid #606060;
+	padding:10px;
+	background-color:#fff;
+	color:#333;
+	z-index: 1515;
+}
+
+#game,#replay {
+	width:1000px;
+}
+
+#wait {
+	float:left;
+	width:600px;
+	height:600px;
+	margin-left:20px;
+	padding-top:290px;
+}
+
+#board {
+	display:none;
+	float:left;
+	width:600px;
+	margin-left:20px;
+}
+
+#console {
+	float:left;	
+	margin-top:78px;
+	margin-left:65px;
+	height:596px;
+	width:300px;
+	border:2px solid #333;
+	overflow-y:auto;
+	background-color:white;
+}
+
+#console > ul {
+	padding:0px;
+	margin:0px;
+}
+
+#console > ul > li {
+	padding:10px;
+	margin:5px;
+}
+
+
+#console > ul > li > .tutorial {
+	display:none;
+}
+
+#console.tutorial > ul > li > .tutorial {
+	display:block;
+	font-style: italic;
+	margin-top:5px;
+	padding-top:5px;
+}
+
+#console.tutorial > ul > li.white-message > .tutorial {
+	border-top:1px solid #333;
+}
+
+#console.tutorial > ul > li.black-message > .tutorial {
+	border-top:1px solid #fff;
+}
+
+.white-message {
+	width:75%;
+	float:left;
+	background-color:#f0d9b5;
+	color:#333;
+	border:2px solid #333;
+	border-radius:10px;
+	font-size:18px;
+}
+.black-message {
+	width:75%;
+	float:right;
+	background-color:#b58863;
+	color:#fff;
+	border:2px solid #333;
+	border-radius:10px;
+	font-size:18px;
+		
+}
+
+.both-message {
+	width:100%;
+	background-color:#daeae7;
+	color:#fff;
+	border:2px solid #333;
+	border-radius:10px;
+	font-size:18px;
+}
+
+
+.faded-logo {
+	color:#CCC;
+}
+
+.faded-piece {
+	opacity: 0.33;
+}
+
+.highlight-square {
+	border:10px solid rgba(255,0,0,0.5);
+}
+
+.highlight-occupies:hover {
+	background-color:rgba(255,0,0,0.5);
+}
+
+#options {
+	width:965px;
+}
+
+.option {
+	padding:8px;
+	font-size:16px;
+	border-top:2px solid #ccc;
+	border-left:2px solid #ccc;
+	border-bottom:2px solid #777;
+	border-right:2px solid #777;
+	border-radius:10px;
+	font-weight:bold;
+	color: #333;
+	text-shadow: #fff 1px 1px 1px;
+	background: rgb(240,217,181); /* Old browsers */
+	background: -moz-linear-gradient(top,  rgba(240,217,181,1) 0%, rgba(181,136,99,1) 51%, rgba(240,217,181,1) 100%); /* FF3.6+ */
+	background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(240,217,181,1)), color-stop(51%,rgba(181,136,99,1)), color-stop(100%,rgba(240,217,181,1))); /* Chrome,Safari4+ */
+	background: -webkit-linear-gradient(top,  rgba(240,217,181,1) 0%,rgba(181,136,99,1) 51%,rgba(240,217,181,1) 100%); /* Chrome10+,Safari5.1+ */
+	background: -o-linear-gradient(top,  rgba(240,217,181,1) 0%,rgba(181,136,99,1) 51%,rgba(240,217,181,1) 100%); /* Opera 11.10+ */
+	background: -ms-linear-gradient(top,  rgba(240,217,181,1) 0%,rgba(181,136,99,1) 51%,rgba(240,217,181,1) 100%); /* IE10+ */
+	background: linear-gradient(to bottom,  rgba(240,217,181,1) 0%,rgba(181,136,99,1) 51%,rgba(240,217,181,1) 100%); /* W3C */
+	filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#f0d9b5', endColorstr='#f0d9b5',GradientType=0 ); /* IE6-9 */
+	text-decoration: none;
+	margin:6px;
+}
+
+.option:active {
+	border-top:2px solid #777;
+	border-left:2px solid #777;
+	border-bottom:2px solid #ccc;
+	border-right:2px solid #ccc;
+	color: #333;
+	text-shadow: #fff -1px -1px 1px;
+}
+
+.option.disabled,
+.option.disabled {
+	border-top:2px solid #ccc;
+	border-left:2px solid #ccc;
+	border-bottom:2px solid #777;
+	border-right:2px solid #777;
+	color: #999;
+	text-shadow: #fff 1px 1px 1px;
+	background: rgb(245,246,246); /* Old browsers */
+	background: -moz-linear-gradient(top,  rgba(245,246,246,1) 0%, rgba(219,220,226,1) 21%, rgba(184,186,198,1) 49%, rgba(221,223,227,1) 80%, rgba(245,246,246,1) 100%); /* FF3.6+ */
+	background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(245,246,246,1)), color-stop(21%,rgba(219,220,226,1)), color-stop(49%,rgba(184,186,198,1)), color-stop(80%,rgba(221,223,227,1)), color-stop(100%,rgba(245,246,246,1))); /* Chrome,Safari4+ */
+	background: -webkit-linear-gradient(top,  rgba(245,246,246,1) 0%,rgba(219,220,226,1) 21%,rgba(184,186,198,1) 49%,rgba(221,223,227,1) 80%,rgba(245,246,246,1) 100%); /* Chrome10+,Safari5.1+ */
+	background: -o-linear-gradient(top,  rgba(245,246,246,1) 0%,rgba(219,220,226,1) 21%,rgba(184,186,198,1) 49%,rgba(221,223,227,1) 80%,rgba(245,246,246,1) 100%); /* Opera 11.10+ */
+	background: -ms-linear-gradient(top,  rgba(245,246,246,1) 0%,rgba(219,220,226,1) 21%,rgba(184,186,198,1) 49%,rgba(221,223,227,1) 80%,rgba(245,246,246,1) 100%); /* IE10+ */
+	background: linear-gradient(to bottom,  rgba(245,246,246,1) 0%,rgba(219,220,226,1) 21%,rgba(184,186,198,1) 49%,rgba(221,223,227,1) 80%,rgba(245,246,246,1) 100%); /* W3C */
+	filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#f5f6f6', endColorstr='#f5f6f6',GradientType=0 ); /* IE6-9 */
+	cursor:default;
+}
+
+.chat {
+	float:right;
+	margin-top:10px;
+}
+
+#chattext {
+	width:245px;
+	border:1px solid #ccc;
+}
+
+
+.dialog {
+	display:none;
+	text-align: center;
+	width:600px;
+	padding:10px;
+	font-size:16px;
+	border:2px solid #333;
+	font-weight:bold;
+	color: #333;
+	background-color:#fff;
+	text-decoration: none;
+	margin-top:10px;
+}
+
+.dialog > .option {
+	width:100px;
+}
+
+
+.banner {
+	position:absolute;
+	top:0px;
+	margin:0px;
+	padding:8px;
+	width:100%;
+	z-index:505;
+	height:40px;
+	text-align:center;
+	font-size:18px;
+	font-weight:bold;
+}
+
+.banner.error   { background-color: #E30804; color: #fff; }
+.banner.success { background-color: #67B11B; color: #fff; }
+
+#replay > #board {
+	padding-top:80px;
+}
+
+header.game > h1, 
+header.replay > h1 {
+	display:inline-block;
+	font-size:54px;
+	font-weight:bold;
+	margin:0px;
+	margin-left:12px;
+	margin-right:20px;
+}
+header.game > h2, 
+header.replay > h2 {
+	display:inline-block;
+	font-size:20px;
+	font-weight:bold;
+}
+
+ul.discs { list-style-type:circle; margin-left:50px; }
+
+
+.social-left  { display:inline-block; margin-left:20px; margin-top:10px;}
+.social-right { display:inline-block; margin-top:10px; float:right;}
+
+.spielercolumn { text-align:center; }
+
+#lobby {
+	display:none;
+	position:fixed;
+	top:0px;
+	right:0px;
+	border:1px solid #ccc;
+	background-color:#fff;
+	padding:0px;
+	z-index: 1010;
+}
+
+#lobby > #icon {
+	float:right;
+	margin-bottom:2px;
+	margin-left:1px;
+	border:0px;
+}
+
+#lobby > #icon.open {
+	background-color: #606060;
+	margin-bottom:0px;
+	margin-left:0px;
+	border-bottom:2px solid #606060;
+	border-left:1px;
+}
+
+#lobby > #panel {
+	display:none;
+	min-width:200px;
+	max-width:320px;
+	max-height:480px;
+	overflow-y: scroll;
+}
+
+#lobby > #panel::-webkit-scrollbar
+{
+  width: 6px;  /* for vertical scrollbars */
+  height: 6px;  /* for horizontal scrollbars */
+}
+
+#lobby > #panel::-webkit-scrollbar-track
+{
+  background: rgba(0, 0, 0, 0.1);
+}
+
+#lobby > #panel::-webkit-scrollbar-thumb
+{
+  background: rgba(0, 0, 0, 0.5);
+}
+
+#lobby > h2 {
+	display:none;
+	margin:0px;
+	padding-top:4px;
+	padding-left:4px;
+	line-height: 30px;
+	color:#fff;
+	background-color: #606060;
+}
+
+#lobby h3 {
+	margin:0px;
+	padding-top:4px;
+	padding-left:4px;
+	line-height: 30px;
+	border-top:1px solid #ccc;
+}
+
+#lobby > #panel > #online {
+	margin:0px;
+	padding:0px;
+	list-style-type: none;
+}
+
+#lobby > #panel > #chats {
+	margin:0px;
+	padding:0px;
+	list-style-type: none;
+}
+
+.chatbox { 
+	border:1px solid #ccc;
+}
+
+.chatbox > h4 {
+	margin:5px;
+	margin-left:2px;
+}
+
+.chatmessage {
+	margin-top:2px;
+	margin-bottom:2px;
+	border-radius:4px;
+	padding:4px;
+	width:176px;
+	font-size:14px;
+}
+
+.chatmessage.to {
+	margin-left:20px;
+	margin-right:4px;
+	border:1px solid #daeae7;
+	background-color: #fff;
+}
+
+.chatmessage.from {
+	margin-left:4px;
+	border:1px solid #d3e1de;
+	background-color:#daeae7;
+}
+
+
+.chattext {
+	width:196px;
+}
+
+.inline {
+	display:inline-block;
+}
+
+.td1 {
+	width:148px;
+	font-size: 18px;
+	line-height:24px;
+	margin:0px;
+	padding:0px;
+	padding-left:10px;  
+}
+
+td.disabled {
+	opacity: 0.33;
+	cursor:default;
+}
+
+td.wait {
+	cursor:wait;
+}
