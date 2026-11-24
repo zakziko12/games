@@ -1,0 +1,3643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#6fbf4a">
+<title>Traffic Route — Free Online Game for Kids</title>
+<!-- Traffic Route — standalone version for GitHub Pages. -->
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #6fbf4a;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  #wrap {
+    position: relative;
+    line-height: 0;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+  }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="480" height="800"></canvas>
+  </div>
+  <script>
+'use strict';
+/*
+ * Traffic Route — original top-down path-drawing puzzle (Plain JS) for
+ * Playgama / YouTube Playables. Second game after Car Wash.
+ *
+ * Draw the path. Move the cars. Don't crash!
+ *
+ * Cars wait at start points on a small suburb map. Each car has a distinct
+ * color and a matching-color destination. The player draws a path for every
+ * car with one finger (touch swipe / mouse drag), taps GO, and all cars
+ * drive their paths at the same time. Different car types drive at
+ * different speeds, so crossings are timing puzzles. A collision fails the
+ * level; reaching every destination wins it.
+ *
+ * MVP (per the user's design doc, 2026-11-21): 1 Suburb map, 30 levels
+ * (1 car -> 2 cars -> 3 cars + intersection -> closed roads / obstacles),
+ * 3 car types (Small / Taxi / Sport, different speeds), real collisions,
+ * win/lose, 3 stars, coins (+100 + 25/star per level), 3 always-active
+ * missions, level select with persistent progress, 5 languages.
+ *
+ * v2 (2026-11-21, ordered by the user after the v1 playtest): light
+ * background music + soft car engine sound (both Web Audio synth, mute
+ * respected), and a full coin SHOP so coins finally have a purpose —
+ * hints (consumable), two vehicle level packs (Truck x5 levels, Bus x5
+ * levels), car paint themes (cosmetic), and map environments (City,
+ * Coastal Town, Snow City). See the README for prices and decisions.
+ *
+ * Stars (defined here, shown in the README and on the complete panel):
+ *   1 star  = level completed.
+ *   2 stars = completed on the first attempt (no crash, no mid-run reset).
+ *   3 stars = first attempt AND no path redraws (no completed path was
+ *             replaced or cleared) AND no hint used — one clean plan,
+ *             first try.
+ *
+ * All art is drawn with canvas shapes. No external assets, no external
+ * network calls. Playgama Bridge SDK (local file) is used for: platform
+ * language, game_ready + lifecycle messages, pause/audio state events,
+ * storage (coins, stars, unlocked level, mission progress, mute setting,
+ * hints, packs, paint themes, map environments), and interstitial ads
+ * (after every 3rd completed level). Every Bridge call is guarded so the
+ * game works fully when Bridge is absent or in mock mode.
+ */
+(function () {
+
+  // ============================== Constants ==============================
+  var W = 480;
+  var H = 800;
+  var STORAGE_PREFIX = 'traffic_route_';
+  // Play board (the suburb map). Top bar above it, control bar below it.
+  var BOARD = { x: 16, y: 108, w: 448, h: 584 };
+  var CAR_R = 15;            // collision radius of a car (px)
+  var CRASH_DIST = 30;       // center distance that counts as a crash
+  var DEST_SIZE = 52;        // destination pad side (px)
+  var DEST_SNAP = 48;        // release within this of the dest center to complete a path
+  var DRAW_MIN_STEP = 8;     // min px between recorded path points
+  var MAX_PATH_LEN = 2600;   // max path length (px)
+  var MAX_PATH_PTS = 220;    // max path points
+  var DEST_BLOCK_AFTER = 60; // another car's dest blocks your path after this much path length
+  var COIN_BASE = 100;       // coins per completed level
+  var COIN_PER_STAR = 25;    // extra coins per star
+  // Suburb road network (visual guide): vertical roads at these x centers,
+  // horizontal roads at these y centers; road width 56.
+  var ROAD_V = [110, 240, 370];
+  var ROAD_H = [230, 400, 570];
+  var ROAD_W = 56;
+
+  // Car types: different speeds make crossings timing puzzles. rad is the
+  // collision radius (a crash happens when two centers are closer than the
+  // SUM of their radii — 15+15 = 30 for the original three types, so the
+  // old CRASH_DIST rule is preserved exactly). clearance is the distance a
+  // path's center line must keep from obstacles; pad is the destination
+  // pad side for this type (bigger vehicles need a bigger pad).
+  var CAR_TYPES = {
+    small: { speed: 95,  len: 44, wid: 26, rad: 15, pad: 52 },
+    taxi:  { speed: 125, len: 46, wid: 26, rad: 15, pad: 52 },
+    sport: { speed: 165, len: 48, wid: 26, rad: 15, pad: 52 },
+    truck: { speed: 70,  len: 62, wid: 30, rad: 20, pad: 64 },
+    bus:   { speed: 85,  len: 70, wid: 28, rad: 22, pad: 72 }
+  };
+  // Paint themes (shop cosmetics): each theme is a 3-color palette, one
+  // color per car in a level. Car body color IS the identity system (car
+  // color == destination color), so a repaint can never change one car's
+  // color alone — themes recolor the whole set consistently, which keeps
+  // the matching mechanic intact. The default theme is the v1 palette.
+  var PALETTES = [
+    { id: 'default', price: 0,   colors: ['#e74c3c', '#3498db', '#f5b301'] },
+    { id: 'sunset',  price: 150, colors: ['#9b59b6', '#1abc9c', '#e67e22'] },
+    { id: 'ocean',   price: 200, colors: ['#1565c0', '#00bcd4', '#ff7043'] },
+    { id: 'forest',  price: 200, colors: ['#2e7d32', '#8d6e63', '#ffb300'] },
+    { id: 'neon',    price: 250, colors: ['#ff2d95', '#00c2e8', '#64dd17'] },
+    { id: 'royal',   price: 300, colors: ['#6a1b9a', '#00838f', '#f9a825'] }
+  ];
+  function paletteById(id) {
+    for (var i = 0; i < PALETTES.length; i++) if (PALETTES[i].id === id) return PALETTES[i];
+    return PALETTES[0];
+  }
+  // Map environments (shop): visual restylings of the board. Level layouts
+  // (roads, obstacles, starts, destinations) never change — only the
+  // palette and the decoration style. tree: 'round' (leafy) | 'palm' |
+  // 'pine' | 'lamp' (city street lamp). house: 'house' | 'building' |
+  // 'hut' (beach hut) | 'snowhouse'.
+  var THEMES = {
+    suburb:  { price: 0,   ground: '#82cc52', stripe: 'rgba(255,255,255,0.05)', road: '#5b5b68',
+               sidewalk: '#9aa0a8', line: '#f7d54d', border: '#4a8f2f', bg: '#6fbf4a',
+               speck: 'rgba(0,0,0,0.05)', zebra: 'rgba(255,255,255,0.75)', tree: 'round', house: 'house' },
+    city:    { price: 400, ground: '#878e99', stripe: 'rgba(255,255,255,0.04)', road: '#3f3f4b',
+               sidewalk: '#a9b0ba', line: '#f7d54d', border: '#5c6672', bg: '#7d868f',
+               speck: 'rgba(0,0,0,0.06)', zebra: 'rgba(255,255,255,0.75)', tree: 'lamp', house: 'building' },
+    coastal: { price: 500, ground: '#f0d9a4', stripe: 'rgba(255,255,255,0.10)', road: '#5f5f6b',
+               sidewalk: '#e3c893', line: '#ffffff', border: '#c9a45e', bg: '#e2c184',
+               speck: 'rgba(120,90,30,0.08)', zebra: 'rgba(255,255,255,0.85)', tree: 'palm', house: 'hut' },
+    snow:    { price: 600, ground: '#e9f1f8', stripe: 'rgba(255,255,255,0.35)', road: '#46536a',
+               sidewalk: '#cdd9e6', line: '#ffd54d', border: '#8fa9c2', bg: '#cfdce9',
+               speck: 'rgba(140,170,200,0.15)', zebra: 'rgba(90,120,150,0.55)', tree: 'pine', house: 'snowhouse' }
+  };
+  var MAP_ORDER = ['suburb', 'city', 'coastal', 'snow'];
+  function theme() { return THEMES[selectedMap] || THEMES.suburb; }
+  // Shop prices (see the README for the economy reasoning).
+  var SHOP = {
+    hintSingle: { price: 50, qty: 1 },
+    hintPack:   { price: 200, qty: 5 },
+    packTruck:  { price: 600 },
+    packBus:    { price: 1000 }
+  };
+
+  // ============================== Levels ==============================
+  // cars: {t: type, x, y: start, dx, dy: destination center}.
+  // obs: {x, y, w, h, k: 'house' | 'works' | 'block'} — rect obstacles that
+  // block path drawing. Houses are suburb scenery; in levels 1-20 they sit
+  // in blocks away from the direct routes, in 21-30 'works' barriers block
+  // roads and force detours. All 30 levels are verified solvable by the
+  // test solver (test/test_levels.py).
+  var LEVELS = [
+    // 1-5: one car, simple path.
+    { cars: [{ t: 'small', x: 110, y: 640, dx: 110, dy: 150 }],
+      obs: [{ x: 277, y: 290, w: 56, h: 44, k: 'house' }, { x: 147, y: 460, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 570, dx: 420, dy: 570 }],
+      obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 640, dx: 420, dy: 150 }],
+      obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 420, y: 640, dx: 60, dy: 150 }],
+      obs: [{ x: 147, y: 460, w: 56, h: 44, k: 'house' }, { x: 277, y: 290, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'taxi', x: 240, y: 650, dx: 240, dy: 140 }],
+      obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+    // 6-10: two cars with crossing paths.
+    { cars: [{ t: 'small', x: 60, y: 570, dx: 420, dy: 570 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 150 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'small', x: 420, y: 400, dx: 60, dy: 400 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 150, dx: 420, dy: 640 },
+             { t: 'taxi', x: 420, y: 150, dx: 60, dy: 640 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'taxi', x: 110, y: 640, dx: 370, dy: 150 },
+             { t: 'taxi', x: 370, y: 640, dx: 110, dy: 150 }],
+      obs: [{ x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'sport', x: 60, y: 230, dx: 420, dy: 570 },
+             { t: 'small', x: 420, y: 230, dx: 60, dy: 570 }],
+      obs: [{ x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    // 11-20: three cars + intersection.
+    { cars: [{ t: 'small', x: 60, y: 230, dx: 420, dy: 230 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 150 },
+             { t: 'sport', x: 60, y: 570, dx: 420, dy: 570 }],
+      obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 110, y: 640, dx: 110, dy: 150 },
+             { t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'taxi', x: 370, y: 640, dx: 370, dy: 150 }],
+      obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 230, dx: 420, dy: 230 },
+             { t: 'taxi', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'sport', x: 60, y: 570, dx: 420, dy: 570 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 400 },
+             { t: 'sport', x: 370, y: 150, dx: 370, dy: 640 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 230, dx: 420, dy: 570 },
+             { t: 'taxi', x: 420, y: 230, dx: 60, dy: 570 },
+             { t: 'sport', x: 240, y: 150, dx: 240, dy: 640 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 150 },
+             { t: 'sport', x: 60, y: 230, dx: 420, dy: 570 }],
+      obs: [{ x: 212, y: 372, w: 56, h: 56, k: 'block' },
+            { x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 110, y: 640, dx: 110, dy: 150 },
+             { t: 'sport', x: 60, y: 570, dx: 420, dy: 570 },
+             { t: 'taxi', x: 370, y: 640, dx: 370, dy: 150 }],
+      obs: [{ x: 82, y: 340, w: 56, h: 56, k: 'works' },
+            { x: 277, y: 130, w: 56, h: 44, k: 'house' }, { x: 147, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 230, dx: 420, dy: 230 },
+             { t: 'small', x: 60, y: 570, dx: 420, dy: 570 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 150 }],
+      obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 110, y: 640, dx: 370, dy: 150 },
+             { t: 'taxi', x: 240, y: 640, dx: 60, dy: 150 },
+             { t: 'sport', x: 370, y: 640, dx: 110, dy: 150 }],
+      obs: [{ x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'small', x: 240, y: 640, dx: 240, dy: 150 },
+             { t: 'small', x: 60, y: 230, dx: 420, dy: 570 }],
+      obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    // 21-30: closed roads / roadworks obstacles to route around.
+    { cars: [{ t: 'small', x: 110, y: 640, dx: 110, dy: 150 }],
+      obs: [{ x: 82, y: 340, w: 56, h: 50, k: 'works' },
+            { x: 277, y: 290, w: 56, h: 44, k: 'house' }, { x: 147, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 150 }],
+      obs: [{ x: 212, y: 372, w: 56, h: 56, k: 'works' },
+            { x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 110, y: 150, dx: 110, dy: 640 },
+             { t: 'taxi', x: 370, y: 150, dx: 370, dy: 640 }],
+      obs: [{ x: 16, y: 372, w: 180, h: 56, k: 'works' }, { x: 284, y: 372, w: 180, h: 56, k: 'works' },
+            { x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 230, dx: 420, dy: 570 },
+             { t: 'taxi', x: 420, y: 230, dx: 60, dy: 570 },
+             { t: 'sport', x: 240, y: 640, dx: 240, dy: 150 }],
+      obs: [{ x: 212, y: 372, w: 56, h: 56, k: 'works' },
+            { x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 110, y: 150, dx: 110, dy: 640 },
+             { t: 'taxi', x: 240, y: 150, dx: 240, dy: 640 },
+             { t: 'sport', x: 370, y: 150, dx: 370, dy: 640 }],
+      obs: [{ x: 16, y: 372, w: 160, h: 56, k: 'works' }, { x: 304, y: 372, w: 160, h: 56, k: 'works' },
+            { x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'taxi', x: 240, y: 150, dx: 240, dy: 640 }],
+      obs: [{ x: 138, y: 372, w: 56, h: 56, k: 'works' }, { x: 212, y: 300, w: 56, h: 50, k: 'works' },
+            { x: 286, y: 372, w: 56, h: 56, k: 'works' },
+            { x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 150, dx: 420, dy: 640 },
+             { t: 'taxi', x: 420, y: 150, dx: 60, dy: 640 },
+             { t: 'sport', x: 240, y: 640, dx: 240, dy: 150 }],
+      obs: [{ x: 138, y: 258, w: 56, h: 50, k: 'works' }, { x: 286, y: 440, w: 56, h: 50, k: 'works' },
+            { x: 212, y: 372, w: 56, h: 56, k: 'works' },
+            { x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 400, dx: 420, dy: 400 },
+             { t: 'taxi', x: 240, y: 640, dx: 240, dy: 150 },
+             { t: 'sport', x: 60, y: 230, dx: 420, dy: 570 }],
+      obs: [{ x: 170, y: 300, w: 140, h: 140, k: 'works' },
+            { x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 110, y: 150, dx: 110, dy: 640 },
+             { t: 'taxi', x: 370, y: 150, dx: 370, dy: 640 },
+             { t: 'sport', x: 60, y: 400, dx: 420, dy: 400 }],
+      obs: [{ x: 16, y: 258, w: 140, h: 56, k: 'works' }, { x: 324, y: 258, w: 140, h: 56, k: 'works' },
+            { x: 16, y: 486, w: 140, h: 56, k: 'works' }, { x: 324, y: 486, w: 140, h: 56, k: 'works' },
+            { x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+    { cars: [{ t: 'small', x: 60, y: 150, dx: 420, dy: 640 },
+             { t: 'taxi', x: 420, y: 150, dx: 60, dy: 640 },
+             { t: 'sport', x: 240, y: 640, dx: 240, dy: 150 }],
+      obs: [{ x: 212, y: 372, w: 56, h: 56, k: 'works' }, { x: 82, y: 258, w: 56, h: 50, k: 'works' },
+            { x: 342, y: 486, w: 56, h: 50, k: 'works' },
+            { x: 147, y: 460, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] }
+  ];
+
+  // Level packs (shop unlocks, v2). Same level format as LEVELS; each pack
+  // has 5 hand-designed levels featuring its vehicle, following the same
+  // progression (1 car -> 2 cars -> 3 cars -> obstacles). Pack levels are
+  // verified solvable by the same solver as the main 30 (test_levels.py).
+  // A pack level may use vehicles from the other pack (B5 has a truck):
+  // the pack unlocks LEVELS, and the vehicles in them are part of the
+  // level — no second purchase is needed to play them.
+  var PACKS = {
+    truck: { levels: [
+      { cars: [{ t: 'truck', x: 240, y: 640, dx: 240, dy: 150 }],
+        obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'truck', x: 60, y: 400, dx: 420, dy: 400 },
+               { t: 'small', x: 240, y: 640, dx: 240, dy: 150 }],
+        obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'truck', x: 110, y: 640, dx: 110, dy: 150 },
+               { t: 'taxi', x: 60, y: 570, dx: 420, dy: 570 },
+               { t: 'small', x: 370, y: 150, dx: 370, dy: 640 }],
+        obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'truck', x: 60, y: 230, dx: 420, dy: 230 },
+               { t: 'truck', x: 240, y: 640, dx: 240, dy: 150 }],
+        obs: [{ x: 82, y: 202, w: 56, h: 50, k: 'works' },
+              { x: 147, y: 620, w: 56, h: 44, k: 'house' }, { x: 277, y: 130, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'truck', x: 60, y: 400, dx: 420, dy: 400 },
+               { t: 'taxi', x: 240, y: 150, dx: 240, dy: 640 },
+               { t: 'sport', x: 420, y: 230, dx: 60, dy: 570 }],
+        obs: [{ x: 212, y: 372, w: 56, h: 56, k: 'works' },
+              { x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] }
+    ] },
+    bus: { levels: [
+      { cars: [{ t: 'bus', x: 110, y: 640, dx: 370, dy: 150 }],
+        obs: [{ x: 147, y: 290, w: 56, h: 44, k: 'house' }, { x: 277, y: 460, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'bus', x: 60, y: 570, dx: 420, dy: 570 },
+               { t: 'small', x: 240, y: 150, dx: 240, dy: 640 }],
+        obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'bus', x: 240, y: 640, dx: 240, dy: 150 },
+               { t: 'taxi', x: 60, y: 230, dx: 420, dy: 230 },
+               { t: 'sport', x: 60, y: 570, dx: 420, dy: 570 }],
+        obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'bus', x: 60, y: 400, dx: 420, dy: 400 },
+               { t: 'bus', x: 370, y: 640, dx: 110, dy: 150 }],
+        obs: [{ x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] },
+      { cars: [{ t: 'bus', x: 60, y: 400, dx: 420, dy: 400 },
+               { t: 'truck', x: 240, y: 150, dx: 240, dy: 640 },
+               { t: 'sport', x: 420, y: 570, dx: 60, dy: 230 }],
+        obs: [{ x: 212, y: 372, w: 56, h: 56, k: 'works' },
+              { x: 147, y: 130, w: 56, h: 44, k: 'house' }, { x: 277, y: 620, w: 56, h: 44, k: 'house' }] }
+    ] }
+  };
+  // Global level index for the stars array: main levels 0-29, truck 30-34,
+  // bus 35-39. Missions count unique completions across all 40 levels.
+  function globalLevelIndex(pack, idx) {
+    if (pack === 'truck') return 30 + idx;
+    if (pack === 'bus') return 35 + idx;
+    return idx;
+  }
+  function packLabel(pack, idx) {
+    if (pack === 'truck') return 'T' + (idx + 1);
+    if (pack === 'bus') return 'B' + (idx + 1);
+    return String(idx + 1);
+  }
+
+  // Missions (fixed 3, per the design doc; progress persists).
+  // levels10 counts UNIQUE completed levels (derived from the stars array);
+  // nocoll5 / stars3 count qualifying completions (replays count).
+  var MISSION_DEFS = [
+    { id: 'levels10', target: 10, reward: 150, name: 'missionLevels' },
+    { id: 'nocoll5',  target: 5,  reward: 100, name: 'missionNoColl' },
+    { id: 'stars3',   target: 3,  reward: 150, name: 'missionStars' }
+  ];
+
+  // ============================== i18n ==============================
+  var STRINGS = {
+    en: { subtitle: "Draw the path. Move the cars. Don't crash!",
+      play: "PLAY", levels: "LEVELS", level: "LEVEL", go: "GO", reset: "RESET",
+      pause: "PAUSE", resume: "RESUME", restart: "RESTART", menu: "MENU",
+      next: "NEXT", replay: "REPLAY", retry: "RETRY", newPlan: "NEW PLAN",
+      levelComplete: "LEVEL COMPLETE!", crash: "CRASH!", crashDesc: "The cars collided!",
+      drawHint: "Draw a path for each car!", allPathsHint: "All paths ready — tap GO!",
+      tapCarClear: "Tap a car to clear its path", blocked: "Blocked!",
+      drawToDest: "Draw all the way to the destination!",
+      selectLevel: "SELECT LEVEL", missions: "MISSIONS",
+      missionLevels: "Complete 10 levels", missionNoColl: "5 levels with no crash",
+      missionStars: "3 stars in 3 levels", allMissionsDone: "All missions complete!",
+      done: "DONE", paused: "PAUSED",
+      howTo: "Drag from a car to its matching destination. Press GO. Don't crash!",
+      star3Tip: "3 stars = first try, no redraws", soundOn: "SOUND ON", soundOff: "SOUND OFF",
+      shop: "SHOP", hintsTab: "HINTS", packsTab: "PACKS", colorsTab: "COLORS", mapsTab: "MAPS",
+      buy: "BUY", owned: "OWNED", selected: "SELECTED", select: "SELECT",
+      hintName: "Hint", hintDesc: "Reveals one car's route as a dashed guide.",
+      hintPackName: "Hints x5", hintPackDesc: "5 hints — save 50 coins!",
+      hintsOwned: "Hints owned", hintInfo: "Tap the lightbulb button in a level to reveal one car's route. Using a hint caps that level at 2 stars.",
+      truckPack: "TRUCK PACK", truckDesc: "5 new levels with the Truck — slow and big, it needs room.",
+      busPack: "BUS PACK", busDesc: "5 new levels with the Bus — long, it needs space at intersections.",
+      newLevels: "5 new levels",
+      palDefault: "Classic", palSunset: "Sunset", palOcean: "Ocean", palForest: "Forest", palNeon: "Neon", palRoyal: "Royal",
+      colorInfo: "A paint theme recolors all cars — car and destination always match.",
+      mapSuburb: "Suburb", mapSuburbDesc: "Quiet residential streets.",
+      mapCity: "City", mapCityDesc: "Dense urban streets and tall buildings.",
+      mapCoastal: "Coastal Town", mapCoastalDesc: "Sandy streets and palm trees by the sea.",
+      mapSnow: "Snow City", mapSnowDesc: "Snow-covered streets and pine trees.",
+      mapInfo: "Change how the whole game looks. Layouts stay the same.",
+      notEnoughCoins: "Not enough coins!", purchased: "Purchased!",
+      noHints: "No hints left — buy more in the Shop!",
+      hintShown: "Hint revealed — follow the dashed guide!",
+      hintFail: "No route found for this car!" },
+    ar: { subtitle: "ارسم الطريق. حرّك السيارات. تجنب الاصطدام!",
+      play: "العب", levels: "المستويات", level: "المستوى", go: "انطلق", reset: "إعادة",
+      pause: "إيقاف مؤقت", resume: "استئناف", restart: "إعادة البدء", menu: "القائمة",
+      next: "التالي", replay: "إعادة اللعب", retry: "حاول مجدداً", newPlan: "خطة جديدة",
+      levelComplete: "اكتمل المستوى!", crash: "اصطدام!", crashDesc: "اصطدمت السيارات!",
+      drawHint: "ارسم طريقاً لكل سيارة!", allPathsHint: "كل الطرق جاهزة — اضغط انطلق!",
+      tapCarClear: "اضغط على سيارة لمسح طريقها", blocked: "مسدود!",
+      drawToDest: "ارسم حتى الوجهة!",
+      selectLevel: "اختر المستوى", missions: "المهام",
+      missionLevels: "أكمل 10 مستويات", missionNoColl: "5 مستويات بدون اصطدام",
+      missionStars: "3 نجوم في 3 مستويات", allMissionsDone: "اكتملت كل المهام!",
+      done: "تم", paused: "متوقف مؤقتاً",
+      howTo: "اسحب من السيارة إلى وجهتها بنفس اللون. اضغط انطلق. لا تصطدم!",
+      star3Tip: "3 نجوم = أول محاولة، بدون إعادة رسم", soundOn: "الصوت يعمل", soundOff: "الصوت مكتوم",
+      shop: "المتجر", hintsTab: "تلميحات", packsTab: "الحزم", colorsTab: "الألوان", mapsTab: "الخرائط",
+      buy: "شراء", owned: "تمتلكه", selected: "محدد", select: "اختيار",
+      hintName: "تلميح", hintDesc: "يكشف مسار سيارة واحدة كدليل متقطع.",
+      hintPackName: "5 تلميحات", hintPackDesc: "5 تلميحات — وفّر 50 عملة!",
+      hintsOwned: "التلميحات المتوفرة", hintInfo: "اضغط زر المصباح في المستوى لكشف مسار سيارة واحدة. استعمال التلميح يحدّ المستوى بنجمتين.",
+      truckPack: "حزمة الشاحنة", truckDesc: "5 مستويات جديدة مع الشاحنة — بطيئة وكبيرة، تحتاج مساحة.",
+      busPack: "حزمة الحافلة", busDesc: "5 مستويات جديدة مع الحافلة — طويلة، تحتاج مساحة في التقاطعات.",
+      newLevels: "5 مستويات جديدة",
+      palDefault: "كلاسيك", palSunset: "الغروب", palOcean: "المحيط", palForest: "الغابة", palNeon: "نيون", palRoyal: "ملكي",
+      colorInfo: "سمة الطلاء تعيد تلوين كل السيارات — السيارة والوجهة دائماً بنفس اللون.",
+      mapSuburb: "الضاحية", mapSuburbDesc: "شوارع سكنية هادئة.",
+      mapCity: "المدينة", mapCityDesc: "شوارع حضرية مزدحمة ومبانٍ عالية.",
+      mapCoastal: "المدينة الساحلية", mapCoastalDesc: "شوارع رملية وأشجار نخيل قرب البحر.",
+      mapSnow: "المدينة الثلجية", mapSnowDesc: "شوارع مغطاة بالثلج وأشجار صنوبر.",
+      mapInfo: "غيّر مظهر اللعبة كاملاً. التصاميم تبقى كما هي.",
+      notEnoughCoins: "عملات غير كافية!", purchased: "تم الشراء!",
+      noHints: "لا توجد تلميحات — اشترِ المزيد من المتجر!",
+      hintShown: "تم كشف التلميح — اتبع الدليل المتقطع!",
+      hintFail: "لا يوجد مسار لهذه السيارة!" },
+    fr: { subtitle: "Dessine la route. Fais rouler les voitures. Évite les collisions !",
+      play: "JOUER", levels: "NIVEAUX", level: "NIVEAU", go: "GO", reset: "RESET",
+      pause: "PAUSE", resume: "REPRENDRE", restart: "RECOMMENCER", menu: "MENU",
+      next: "SUIVANT", replay: "REJOUER", retry: "RÉESSAYER", newPlan: "NOUVEAU PLAN",
+      levelComplete: "NIVEAU TERMINÉ !", crash: "COLLISION !", crashDesc: "Les voitures se sont percutées !",
+      drawHint: "Dessine un chemin pour chaque voiture !", allPathsHint: "Tous les chemins sont prêts — appuie sur GO !",
+      tapCarClear: "Touche une voiture pour effacer son chemin", blocked: "Bloqué !",
+      drawToDest: "Dessine jusqu'à la destination !",
+      selectLevel: "CHOISIR UN NIVEAU", missions: "MISSIONS",
+      missionLevels: "Terminer 10 niveaux", missionNoColl: "5 niveaux sans collision",
+      missionStars: "3 étoiles dans 3 niveaux", allMissionsDone: "Toutes les missions terminées !",
+      done: "FAIT", paused: "PAUSE",
+      howTo: "Glisse du doigt d'une voiture vers sa destination de même couleur. Appuie sur GO. Ne percute rien !",
+      star3Tip: "3 étoiles = premier essai, sans redessiner", soundOn: "SON ACTIVÉ", soundOff: "SON COUPÉ",
+      shop: "BOUTIQUE", hintsTab: "INDICES", packsTab: "PACKS", colorsTab: "COULEURS", mapsTab: "CARTES",
+      buy: "ACHETER", owned: "POSSÉDÉ", selected: "CHOISI", select: "CHOISIR",
+      hintName: "Indice", hintDesc: "Révèle la route d'une voiture en pointillés.",
+      hintPackName: "Indices x5", hintPackDesc: "5 indices — économisez 50 pièces !",
+      hintsOwned: "Indices possédés", hintInfo: "Touche l'ampoule dans un niveau pour révéler la route d'une voiture. Un indice limite ce niveau à 2 étoiles.",
+      truckPack: "PACK CAMION", truckDesc: "5 nouveaux niveaux avec le camion — lent et grand, il lui faut de la place.",
+      busPack: "PACK BUS", busDesc: "5 nouveaux niveaux avec le bus — long, il lui faut de la place aux croisements.",
+      newLevels: "5 nouveaux niveaux",
+      palDefault: "Classique", palSunset: "Coucher de soleil", palOcean: "Océan", palForest: "Forêt", palNeon: "Néon", palRoyal: "Royal",
+      colorInfo: "Un thème de peinture recolore toutes les voitures — voiture et destination assorties.",
+      mapSuburb: "Banlieue", mapSuburbDesc: "Rues résidentielles calmes.",
+      mapCity: "Ville", mapCityDesc: "Rues urbaines denses et grands immeubles.",
+      mapCoastal: "Ville côtière", mapCoastalDesc: "Rues de sable et palmiers au bord de la mer.",
+      mapSnow: "Ville enneigée", mapSnowDesc: "Rues enneigées et pins.",
+      mapInfo: "Change l'aspect du jeu entier. Les niveaux restent les mêmes.",
+      notEnoughCoins: "Pas assez de pièces !", purchased: "Acheté !",
+      noHints: "Plus d'indices — achète-en à la boutique !",
+      hintShown: "Indice révélé — suis le guide en pointillés !",
+      hintFail: "Aucune route trouvée pour cette voiture !" },
+    es: { subtitle: "Dibuja la ruta. Mueve los coches. ¡Evita chocar!",
+      play: "JUGAR", levels: "NIVELES", level: "NIVEL", go: "¡VAMOS!", reset: "RESET",
+      pause: "PAUSA", resume: "SEGUIR", restart: "REINICIAR", menu: "MENÚ",
+      next: "SIGUIENTE", replay: "REPETIR", retry: "REINTENTAR", newPlan: "NUEVO PLAN",
+      levelComplete: "¡NIVEL COMPLETADO!", crash: "¡CHOQUE!", crashDesc: "¡Los coches chocaron!",
+      drawHint: "¡Dibuja una ruta para cada coche!", allPathsHint: "Todas las rutas listas — ¡pulsa VAMOS!",
+      tapCarClear: "Toca un coche para borrar su ruta", blocked: "¡Bloqueado!",
+      drawToDest: "¡Dibuja hasta el destino!",
+      selectLevel: "ELIGE NIVEL", missions: "MISIONES",
+      missionLevels: "Completa 10 niveles", missionNoColl: "5 niveles sin chocar",
+      missionStars: "3 estrellas en 3 niveles", allMissionsDone: "¡Todas las misiones completadas!",
+      done: "HECHO", paused: "PAUSA",
+      howTo: "Arrastra desde un coche hasta su destino del mismo color. Pulsa VAMOS. ¡No choques!",
+      star3Tip: "3 estrellas = primer intento, sin redibujar", soundOn: "SONIDO ON", soundOff: "SONIDO OFF",
+      shop: "TIENDA", hintsTab: "PISTAS", packsTab: "PAQUETES", colorsTab: "COLORES", mapsTab: "MAPAS",
+      buy: "COMPRAR", owned: "COMPRADO", selected: "ELEGIDO", select: "ELEGIR",
+      hintName: "Pista", hintDesc: "Muestra la ruta de un coche como guía de puntos.",
+      hintPackName: "Pistas x5", hintPackDesc: "5 pistas — ¡ahorra 50 monedas!",
+      hintsOwned: "Pistas disponibles", hintInfo: "Toca la bombilla en un nivel para mostrar la ruta de un coche. Usar una pista limita ese nivel a 2 estrellas.",
+      truckPack: "PAQUETE CAMIÓN", truckDesc: "5 niveles nuevos con el camión — lento y grande, necesita espacio.",
+      busPack: "PAQUETE AUTOBÚS", busDesc: "5 niveles nuevos con el autobús — largo, necesita espacio en los cruces.",
+      newLevels: "5 niveles nuevos",
+      palDefault: "Clásico", palSunset: "Atardecer", palOcean: "Océano", palForest: "Bosque", palNeon: "Neón", palRoyal: "Real",
+      colorInfo: "Un tema de pintura recolorea todos los coches — coche y destino siempre coinciden.",
+      mapSuburb: "Suburbio", mapSuburbDesc: "Calles residenciales tranquilas.",
+      mapCity: "Ciudad", mapCityDesc: "Calles urbanas densas y edificios altos.",
+      mapCoastal: "Ciudad costera", mapCoastalDesc: "Calles de arena y palmeras junto al mar.",
+      mapSnow: "Ciudad nevada", mapSnowDesc: "Calles nevadas y pinos.",
+      mapInfo: "Cambia el aspecto de todo el juego. Los niveles siguen igual.",
+      notEnoughCoins: "¡No tienes suficientes monedas!", purchased: "¡Comprado!",
+      noHints: "No quedan pistas — ¡compra más en la tienda!",
+      hintShown: "Pista revelada — ¡sigue la guía de puntos!",
+      hintFail: "¡No hay ruta para este coche!" },
+    de: { subtitle: "Zeichne die Route. Bewege die Autos. Vermeide Unfälle!",
+      play: "SPIELEN", levels: "LEVEL", level: "LEVEL", go: "LOS", reset: "RESET",
+      pause: "PAUSE", resume: "WEITER", restart: "NEUSTART", menu: "MENÜ",
+      next: "WEITER", replay: "NOCHMAL", retry: "NOCHMAL", newPlan: "NEUER PLAN",
+      levelComplete: "LEVEL GESCHAFFT!", crash: "UNFALL!", crashDesc: "Die Autos sind zusammengestoßen!",
+      drawHint: "Zeichne für jedes Auto eine Route!", allPathsHint: "Alle Routen bereit — tippe auf LOS!",
+      tapCarClear: "Tippe auf ein Auto, um seine Route zu löschen", blocked: "Blockiert!",
+      drawToDest: "Zeichne bis zum Ziel!",
+      selectLevel: "LEVEL WÄHLEN", missions: "MISSIONEN",
+      missionLevels: "10 Level abschließen", missionNoColl: "5 Level ohne Unfall",
+      missionStars: "3 Sterne in 3 Leveln", allMissionsDone: "Alle Missionen abgeschlossen!",
+      done: "FERTIG", paused: "PAUSE",
+      howTo: "Ziehe vom Auto zu seinem Ziel in derselben Farbe. Tippe auf LOS. Nicht zusammenstoßen!",
+      star3Tip: "3 Sterne = erster Versuch, ohne Neuzeichnen", soundOn: "TON AN", soundOff: "TON AUS",
+      shop: "SHOP", hintsTab: "TIPPS", packsTab: "PAKETE", colorsTab: "FARBEN", mapsTab: "KARTEN",
+      buy: "KAUFEN", owned: "GEKAUFT", selected: "GEWÄHLT", select: "WÄHLEN",
+      hintName: "Tipp", hintDesc: "Zeigt die Route eines Autos als gestrichelte Linie.",
+      hintPackName: "Tipps x5", hintPackDesc: "5 Tipps — spare 50 Münzen!",
+      hintsOwned: "Verfügbare Tipps", hintInfo: "Tippe im Level auf die Glühbirne, um die Route eines Autos zu sehen. Ein Tipp begrenzt das Level auf 2 Sterne.",
+      truckPack: "LKW-PAKET", truckDesc: "5 neue Level mit dem LKW — langsam und groß, er braucht Platz.",
+      busPack: "BUS-PAKET", busDesc: "5 neue Level mit dem Bus — lang, er braucht Platz an Kreuzungen.",
+      newLevels: "5 neue Level",
+      palDefault: "Klassisch", palSunset: "Sonnenuntergang", palOcean: "Ozean", palForest: "Wald", palNeon: "Neon", palRoyal: "Königlich",
+      colorInfo: "Ein Farbthema färbt alle Autos neu — Auto und Ziel passen immer zusammen.",
+      mapSuburb: "Vorort", mapSuburbDesc: "Ruhige Wohnstraßen.",
+      mapCity: "Stadt", mapCityDesc: "Dichte Stadtstraßen und hohe Gebäude.",
+      mapCoastal: "Küstenstadt", mapCoastalDesc: "Sandstraßen und Palmen am Meer.",
+      mapSnow: "Schneestadt", mapSnowDesc: "Verschneite Straßen und Kiefern.",
+      mapInfo: "Verändert das Aussehen des ganzen Spiels. Die Level bleiben gleich.",
+      notEnoughCoins: "Nicht genug Münzen!", purchased: "Gekauft!",
+      noHints: "Keine Tipps mehr — kaufe neue im Shop!",
+      hintShown: "Tipp gezeigt — folge der gestrichelten Linie!",
+      hintFail: "Keine Route für dieses Auto gefunden!" }
+  };
+  var lang = 'en';
+
+  function setLanguage(raw) {
+    var code = (raw || '').toString().toLowerCase().slice(0, 2);
+    lang = STRINGS[code] ? code : 'en';
+  }
+  function t(key) {
+    if (STRINGS[lang] && STRINGS[lang][key]) return STRINGS[lang][key];
+    return STRINGS.en[key] || key;
+  }
+
+  // ============================== Helpers ==============================
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function hash(n) { var x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+  function dist(x1, y1, x2, y2) { var dx = x2 - x1, dy = y2 - y1; return Math.sqrt(dx * dx + dy * dy); }
+  function hit(px, py, r) {
+    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+  }
+  function rr(c, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+  function easeOutCubic(f) { return 1 - Math.pow(1 - f, 3); }
+  function easeOutBack(f) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(f - 1, 3) + c1 * Math.pow(f - 1, 2); }
+  function drawStar(c, cx, cy, r, fill) {
+    c.beginPath();
+    for (var i = 0; i < 10; i++) {
+      var rad = i % 2 === 0 ? r : r * 0.45;
+      var a = -Math.PI / 2 + i * Math.PI / 5;
+      var x = cx + Math.cos(a) * rad, y = cy + Math.sin(a) * rad;
+      if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    }
+    c.closePath();
+    c.fillStyle = fill;
+    c.fill();
+  }
+
+  // ============================== Canvas ==============================
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var dpr = 1;
+
+  function resize() {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var scale = Math.min(vw / W, vh / H);
+    canvas.style.width = Math.floor(W * scale) + 'px';
+    canvas.style.height = Math.floor(H * scale) + 'px';
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+  }
+  function toLogical(e) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / rect.width * W,
+      y: (e.clientY - rect.top) / rect.height * H
+    };
+  }
+
+  // ============================== Audio (WebAudio synth) ==============================
+  var AudioSys = {
+    ctx: null, master: null,
+    userMuted: false, platformMuted: false, adOpen: false, paused: false,
+    drawLast: 0,
+    ensure: function () {
+      if (this.ctx) {
+        if (this.ctx.state === 'suspended') { try { this.ctx.resume(); } catch (e) {} }
+        return;
+      }
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this.ctx = new AC();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.isMuted() ? 0 : 0.5;
+        this.master.connect(this.ctx.destination);
+      } catch (e) { this.ctx = null; }
+    },
+    unlock: function () { this.ensure(); this.startMusic(); },
+    isMuted: function () { return this.userMuted || this.platformMuted || this.adOpen || this.paused; },
+    applyMute: function () {
+      if (this.master && this.ctx) {
+        this.master.gain.setValueAtTime(this.isMuted() ? 0 : 0.5, this.ctx.currentTime);
+      }
+    },
+    setUserMuted: function (m) { this.userMuted = m; this.applyMute(); },
+    setPlatformMuted: function (m) { this.platformMuted = m; this.applyMute(); },
+    setAdOpen: function (o) { this.adOpen = o; this.applyMute(); },
+    setPaused: function (p) { this.paused = p; this.applyMute(); },
+    tone: function (fA, fB, dur, type, vol, delay) {
+      if (!this.ctx || !this.master || this.isMuted()) return;
+      try {
+        var t0 = this.ctx.currentTime + (delay || 0);
+        var o = this.ctx.createOscillator();
+        var g = this.ctx.createGain();
+        o.type = type || 'sine';
+        o.frequency.setValueAtTime(fA, t0);
+        if (fB !== fA) o.frequency.exponentialRampToValueAtTime(Math.max(1, fB), t0 + dur);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(vol || 0.4, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(g); g.connect(this.master);
+        o.start(t0); o.stop(t0 + dur + 0.02);
+      } catch (e) {}
+    },
+    noiseBurst: function (dur, vol, freq, q) {
+      if (!this.ctx || !this.master || this.isMuted()) return;
+      try {
+        var t0 = this.ctx.currentTime;
+        var len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+        var buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+        var data = buf.getChannelData(0);
+        for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+        var src = this.ctx.createBufferSource();
+        src.buffer = buf;
+        var g = this.ctx.createGain();
+        g.gain.value = vol || 0.5;
+        var node = src;
+        if (freq) {
+          var f = this.ctx.createBiquadFilter();
+          f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q || 1;
+          src.connect(f); node = f;
+        }
+        node.connect(g); g.connect(this.master);
+        src.start(t0);
+      } catch (e) {}
+    },
+    drawTick: function () {
+      var now = Date.now();
+      if (now - this.drawLast < 90) return;
+      this.drawLast = now;
+      this.tone(700 + Math.random() * 200, 900, 0.05, 'sine', 0.12);
+    },
+    click: function () { this.tone(620, 520, 0.06, 'sine', 0.3); },
+    ding: function () { this.tone(1046, 1046, 0.09, 'sine', 0.4); this.tone(1568, 1568, 0.16, 'sine', 0.4, 0.09); },
+    coin: function () { this.tone(880, 880, 0.07, 'sine', 0.4); this.tone(1318, 1318, 0.13, 'sine', 0.4, 0.07); },
+    horn: function () { this.tone(392, 392, 0.12, 'square', 0.15); this.tone(392, 392, 0.12, 'square', 0.15, 0.16); },
+    vroom: function () { this.tone(90, 220, 0.5, 'sawtooth', 0.12); },
+    arrive: function () { this.tone(880, 1320, 0.12, 'sine', 0.3); },
+    win: function () {
+      this.tone(523, 523, 0.12, 'sine', 0.4);
+      this.tone(659, 659, 0.12, 'sine', 0.4, 0.12);
+      this.tone(784, 784, 0.12, 'sine', 0.4, 0.24);
+      this.tone(1046, 1046, 0.22, 'sine', 0.4, 0.36);
+    },
+    crash: function () {
+      this.noiseBurst(0.4, 0.7, 300, 0.5);
+      this.tone(160, 60, 0.4, 'sawtooth', 0.4);
+    },
+    denied: function () { this.tone(220, 160, 0.15, 'square', 0.2); },
+    star: function () { this.tone(1568, 2093, 0.15, 'sine', 0.35); },
+    // ---- Background music: a gentle 8-second loop. Four soft chords
+    // (Cmaj7 - Am7 - Fmaj7 - G7, one every 2s) as a triangle pad + a soft
+    // bass root, with a light pentatonic melody (one note per 0.5s).
+    // Scheduled with a lookahead timer; starts only after the first user
+    // interaction (autoplay policy) via unlock(). Volume stays low, and
+    // the music runs through the master gain, so mute / pause / ads
+    // silence it automatically.
+    music: { started: false, step: 0, nextT: 0, timer: null },
+    MUSIC_CHORDS: [
+      [261.63, 329.63, 392.00, 493.88],
+      [220.00, 261.63, 329.63, 392.00],
+      [174.61, 220.00, 261.63, 329.63],
+      [196.00, 246.94, 293.66, 349.23]
+    ],
+    MUSIC_BASS: [130.81, 110.00, 87.31, 98.00],
+    MUSIC_MELODY: [659.25, 783.99, 880.00, 783.99, 659.25, 587.33, 523.25, 587.33,
+                   698.46, 659.25, 587.33, 523.25, 587.33, 659.25, 783.99, 659.25],
+    noteAt: function (freq, t0, dur, type, vol, attack) {
+      if (!this.ctx || !this.master) return;
+      try {
+        var o = this.ctx.createOscillator();
+        var g = this.ctx.createGain();
+        o.type = type || 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(vol || 0.05, t0 + (attack || 0.05));
+        g.gain.setValueAtTime(vol || 0.05, t0 + Math.max(0.05, dur - 0.18));
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(g); g.connect(this.master);
+        o.start(t0); o.stop(t0 + dur + 0.05);
+      } catch (e) {}
+    },
+    startMusic: function () {
+      if (!this.ctx || this.music.started) return;
+      this.music.started = true;
+      this.music.step = 0;
+      this.music.nextT = this.ctx.currentTime + 0.1;
+      var self = this;
+      this.music.timer = setInterval(function () { self.scheduleMusic(); }, 150);
+    },
+    scheduleMusic: function () {
+      if (!this.ctx) return;
+      var STEP = 0.5; // one melody note per step; chord changes every 4 steps
+      while (this.music.nextT < this.ctx.currentTime + 0.6) {
+        var step = this.music.step;
+        var t0 = this.music.nextT;
+        var chordIdx = Math.floor(step / 4) % 4;
+        if (step % 4 === 0) {
+          var chord = this.MUSIC_CHORDS[chordIdx];
+          for (var i = 0; i < chord.length; i++) {
+            this.noteAt(chord[i], t0, 2.2, 'triangle', 0.030, 0.4);
+          }
+          this.noteAt(this.MUSIC_BASS[chordIdx], t0, 2.0, 'sine', 0.045, 0.1);
+        }
+        this.noteAt(this.MUSIC_MELODY[step % 16], t0, 0.55, 'sine', 0.045, 0.03);
+        this.music.nextT += STEP;
+        this.music.step++;
+      }
+    },
+    // ---- Car engine: a soft low hum while cars are driving. Two
+    // oscillators (saw + sub sine) through a lowpass filter; the pitch
+    // follows the average speed of the moving cars. Started in startRun(),
+    // stopped when the run ends (all arrived / crash / reset / leave).
+    // Runs through the master gain, so mute silences it.
+    engine: { on: false, osc: null, osc2: null, gain: null },
+    engineStart: function () {
+      if (!this.ctx || !this.master || this.engine.on) return;
+      try {
+        var o1 = this.ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 60;
+        var o2 = this.ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = 30;
+        var f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 240; f.Q.value = 0.7;
+        var g = this.ctx.createGain(); g.gain.value = 0.0001;
+        o1.connect(f); o2.connect(f); f.connect(g); g.connect(this.master);
+        o1.start(); o2.start();
+        g.gain.setTargetAtTime(0.045, this.ctx.currentTime, 0.15);
+        this.engine = { on: true, osc: o1, osc2: o2, gain: g };
+      } catch (e) { this.engine.on = false; }
+    },
+    engineSet: function (avgSpeed) {
+      if (!this.engine.on || !this.ctx) return;
+      var freq = 48 + avgSpeed * 0.28; // ~68 Hz (truck) to ~94 Hz (sport)
+      try {
+        this.engine.osc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.1);
+        this.engine.osc2.frequency.setTargetAtTime(freq / 2, this.ctx.currentTime, 0.1);
+      } catch (e) {}
+    },
+    engineStop: function () {
+      if (!this.engine.on || !this.ctx) return;
+      var eng = this.engine;
+      this.engine = { on: false, osc: null, osc2: null, gain: null };
+      try {
+        eng.gain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, 0.08);
+        eng.osc.stop(this.ctx.currentTime + 0.4);
+        eng.osc2.stop(this.ctx.currentTime + 0.4);
+      } catch (e) {}
+    }
+  };
+
+  // ============================== Bridge wrapper ==============================
+  // Every call is guarded: the game works fully with no Bridge at all.
+  var Bridge = {
+    available: false,
+    platformId: null,
+    init: function () {
+      var self = this;
+      return new Promise(function (resolve) {
+        try {
+          if (typeof window.bridge === 'undefined' || !window.bridge.initialize) { resolve(false); return; }
+          var done = false;
+          var timer = setTimeout(function () { if (!done) { done = true; resolve(false); } }, 5000);
+          window.bridge.initialize().then(function () {
+            if (done) return;
+            done = true; clearTimeout(timer);
+            self.available = true;
+            try { self.platformId = window.bridge.platform ? window.bridge.platform.id : null; } catch (e) {}
+            resolve(true);
+          }).catch(function () {
+            if (done) return;
+            done = true; clearTimeout(timer);
+            resolve(false);
+          });
+        } catch (e) { resolve(false); }
+      });
+    },
+    useBridgeStorage: function () {
+      // On a real platform, Bridge storage is the only store. In mock/local
+      // mode it does not persist, so localStorage is the fallback there.
+      return this.available && this.platformId !== 'mock';
+    },
+    subscribe: function () {
+      try {
+        var b = window.bridge;
+        if (!b || !b.EVENT_NAME) return;
+        if (b.platform && b.platform.on) {
+          b.platform.on(b.EVENT_NAME.PAUSE_STATE_CHANGED, function (isPaused) { onPlatformPause(!!isPaused); });
+          b.platform.on(b.EVENT_NAME.AUDIO_STATE_CHANGED, function (isEnabled) { AudioSys.setPlatformMuted(!isEnabled); });
+        }
+        if (b.advertisement && b.advertisement.on) {
+          b.advertisement.on(b.EVENT_NAME.INTERSTITIAL_STATE_CHANGED, function (st) {
+            if (st === 'opened') AudioSys.setAdOpen(true);
+            else if (st === 'closed' || st === 'failed') AudioSys.setAdOpen(false);
+          });
+        }
+      } catch (e) {}
+    },
+    applyInitialPlatformState: function () {
+      try {
+        var b = window.bridge;
+        if (!b) return;
+        if (b.platform && b.platform.isAudioEnabled === false) AudioSys.setPlatformMuted(true);
+        if (b.advertisement && b.advertisement.interstitialState === 'opened') AudioSys.setAdOpen(true);
+      } catch (e) {}
+    },
+    send: function (msg) {
+      if (!this.available) return;
+      try {
+        var p = window.bridge.platform.sendMessage(msg);
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) {}
+    },
+    showInterstitial: function () {
+      if (!this.available) return;
+      try {
+        var ad = window.bridge.advertisement;
+        if (ad && ad.isInterstitialSupported) ad.showInterstitial('game_over');
+      } catch (e) { /* ads must never break the game */ }
+    },
+    loadProgress: function () {
+      var self = this;
+      return new Promise(function (resolve) {
+        var out = { coins: 0, stars: [], unlocked: 1, mprogress: { nocoll5: 0, stars3: 0 }, muted: false,
+                    hints: 0, packs: { truck: 0, bus: 0 },
+                    colors: { owned: ['default'], selected: 'default' },
+                    maps: { owned: ['suburb'], selected: 'suburb' } };
+        function fromLocal() {
+          out.coins = readLocalInt('coins', 0);
+          out.stars = readLocalJson('stars', []);
+          out.unlocked = clamp(readLocalInt('unlocked', 1), 1, LEVELS.length);
+          out.mprogress = readLocalJson('mprogress', { nocoll5: 0, stars3: 0 });
+          out.muted = readLocalBool('muted', false);
+          out.hints = readLocalInt('hints', 0);
+          out.packs = readLocalJson('packs', { truck: 0, bus: 0 });
+          out.colors = readLocalJson('colors', { owned: ['default'], selected: 'default' });
+          out.maps = readLocalJson('maps', { owned: ['suburb'], selected: 'suburb' });
+          resolve(out);
+        }
+        if (!self.useBridgeStorage()) { fromLocal(); return; }
+        try {
+          window.bridge.storage.get(['coins', 'stars', 'unlocked', 'mprogress', 'muted',
+                                     'hints', 'packs', 'colors', 'maps']).then(function (res) {
+            var vals = null;
+            if (Array.isArray(res)) vals = res;
+            else if (res && typeof res === 'object') vals = [res.coins, res.stars, res.unlocked, res.mprogress, res.muted,
+                                                              res.hints, res.packs, res.colors, res.maps];
+            if (vals) {
+              if (vals[0] !== null && vals[0] !== undefined) out.coins = parseInt(vals[0], 10) || 0;
+              else out.coins = readLocalInt('coins', 0);
+              if (vals[1] !== null && vals[1] !== undefined) { try { out.stars = JSON.parse(vals[1]) || []; } catch (e) { out.stars = readLocalJson('stars', []); } }
+              else out.stars = readLocalJson('stars', []);
+              if (vals[2] !== null && vals[2] !== undefined) out.unlocked = clamp(parseInt(vals[2], 10) || 1, 1, LEVELS.length);
+              else out.unlocked = clamp(readLocalInt('unlocked', 1), 1, LEVELS.length);
+              if (vals[3] !== null && vals[3] !== undefined) { try { out.mprogress = JSON.parse(vals[3]) || { nocoll5: 0, stars3: 0 }; } catch (e) { out.mprogress = readLocalJson('mprogress', { nocoll5: 0, stars3: 0 }); } }
+              else out.mprogress = readLocalJson('mprogress', { nocoll5: 0, stars3: 0 });
+              if (vals[4] !== null && vals[4] !== undefined) out.muted = String(vals[4]) === '1' || vals[4] === true;
+              else out.muted = readLocalBool('muted', false);
+              if (vals[5] !== null && vals[5] !== undefined) out.hints = parseInt(vals[5], 10) || 0;
+              else out.hints = readLocalInt('hints', 0);
+              if (vals[6] !== null && vals[6] !== undefined) { try { out.packs = JSON.parse(vals[6]) || { truck: 0, bus: 0 }; } catch (e) { out.packs = readLocalJson('packs', { truck: 0, bus: 0 }); } }
+              else out.packs = readLocalJson('packs', { truck: 0, bus: 0 });
+              if (vals[7] !== null && vals[7] !== undefined) { try { out.colors = JSON.parse(vals[7]) || { owned: ['default'], selected: 'default' }; } catch (e) { out.colors = readLocalJson('colors', { owned: ['default'], selected: 'default' }); } }
+              else out.colors = readLocalJson('colors', { owned: ['default'], selected: 'default' });
+              if (vals[8] !== null && vals[8] !== undefined) { try { out.maps = JSON.parse(vals[8]) || { owned: ['suburb'], selected: 'suburb' }; } catch (e) { out.maps = readLocalJson('maps', { owned: ['suburb'], selected: 'suburb' }); } }
+              else out.maps = readLocalJson('maps', { owned: ['suburb'], selected: 'suburb' });
+              resolve(out);
+            } else { fromLocal(); }
+          }).catch(function () { fromLocal(); });
+        } catch (e) { fromLocal(); }
+      });
+    },
+    saveProgress: function (key, value) {
+      var self = this;
+      var str = (typeof value === 'string') ? value : JSON.stringify(value);
+      if (self.useBridgeStorage()) {
+        try {
+          window.bridge.storage.set([key], [str]).then(function () {}, function () {
+            writeLocal(key, str);
+          });
+          return;
+        } catch (e) { /* fall through to local */ }
+      }
+      writeLocal(key, str);
+    }
+  };
+
+  function readLocalInt(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (v === null || v === undefined) return def;
+      var n = parseInt(v, 10);
+      return isNaN(n) ? def : n;
+    } catch (e) { return def; }
+  }
+  function readLocalBool(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (v === null || v === undefined) return def;
+      return v === '1' || v === 'true';
+    } catch (e) { return def; }
+  }
+  function readLocalJson(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (v === null || v === undefined) return def;
+      var parsed = JSON.parse(v);
+      return (parsed === null || parsed === undefined) ? def : parsed;
+    } catch (e) { return def; }
+  }
+  function writeLocal(key, value) {
+    try { window.localStorage.setItem(STORAGE_PREFIX + key, String(value)); } catch (e) {}
+  }
+
+  // ============================== Game state ==============================
+  // state: 'loading' | 'menu' | 'levels' | 'shop' | 'playing' | 'paused'
+  // phase (inside 'playing'): 'draw' | 'run' | 'crashed' | 'complete'
+  // panel (inside 'playing'): null | 'complete' | 'failed'
+  var state = 'loading';
+  var phase = 'draw';
+  var panel = null;
+  var pausedFrom = 'playing';
+  var pausedBy = null; // 'user' | 'tab' | 'platform'
+  var time = 0;
+  var lastTs = 0;
+
+  // Persistent meta-progression (Bridge storage, localStorage fallback).
+  var coins = 0;
+  var stars = [];          // stars[i] = 0..3 for global level i (main 0-29, truck 30-34, bus 35-39)
+  var unlocked = 1;        // highest unlocked MAIN level number (1-based)
+  var mProgress = { nocoll5: 0, stars3: 0 };
+  var levelsCompleted = 0; // total completions this session (drives interstitials)
+  // Shop state (v2, all persisted).
+  var hints = 0;                       // hints owned (consumable)
+  var packUnlocked = { truck: 0, bus: 0 }; // highest unlocked level per pack (0 = not purchased)
+  var ownedColors = ['default'];       // palette ids owned
+  var selectedColor = 'default';       // active paint theme
+  var ownedMaps = ['suburb'];          // map ids owned
+  var selectedMap = 'suburb';          // active map environment
+  var shopTab = 'hints';               // 'hints' | 'packs' | 'colors' | 'maps'
+  var selectTab = 'main';              // level-select tab: 'main' | 'truck' | 'bus'
+
+  // Current level.
+  var levelPack = null;    // null (main 30) | 'truck' | 'bus'
+  var levelIndex = 0;      // 0-based within the current pack (or main list)
+  var levelDef = null;
+  var cars = [];           // {type, speed, x, y, dx, dy, color, path, cum, totalLen, dist, segIdx, heading, moving, arrived, crashed, tilt}
+  var trees = [];          // decorative trees for this level
+  var retried = false;     // this level was restarted after GO (crash or mid-run reset)
+  var redraws = 0;         // completed paths replaced/cleared this level attempt
+  var crashCount = 0;      // crashes this level session (for the no-collision mission)
+  var crashT = 0;          // timer after a crash before the failed panel shows
+  var crashAt = null;      // {x, y} crash point
+  var completeT = 0;       // timer after all cars arrive before the complete panel shows
+  var lastStars = 0;       // stars earned on the last completion
+  var lastCoins = 0;       // coins earned on the last completion
+  var missionToast = null; // {text, t} — mission completed popup
+  var shakeT = 0;          // screen shake timer after a crash
+
+  // Hints (v2): a revealed solution guide for one car. hintPath = {car, pts}
+  // or null. Using a hint sets usedHint, which caps the level at 2 stars.
+  var hintPath = null;
+  var usedHint = false;
+
+  // Path drawing (one finger).
+  var drawing = null;      // {car, pts, len, downX, downY, downT, moved}
+  var toast = null;        // {text, t} — contextual hint toast
+  var toastBlockedAt = 0;  // throttle for the "Blocked!" toast
+  var particles = [];      // crash smoke / confetti {x, y, vx, vy, life, maxLife, size, color, kind}
+  var popups = [];         // floating "+N" texts {x, y, text, t, color}
+
+  // Menu decoration: two cars looping on the road grid.
+  var menuCars = [
+    { pts: [{ x: 110, y: 230 }, { x: 370, y: 230 }, { x: 370, y: 570 }, { x: 110, y: 570 }], dist: 0, speed: 62, color: '#e74c3c', type: 'small' },
+    { pts: [{ x: 240, y: 570 }, { x: 370, y: 570 }, { x: 370, y: 230 }, { x: 240, y: 230 }], dist: 120, speed: 78, color: '#3498db', type: 'taxi' }
+  ];
+
+  // ============================== Buttons (logical rects) ==============================
+  var BTN = {
+    go:      { x: 140, y: 708, w: 200, h: 72 },
+    reset:   { x: 16,  y: 712, w: 100, h: 64 },
+    levels:  { x: 364, y: 712, w: 100, h: 64 },
+    pause:   { x: 416, y: 10,  w: 44,  h: 40 },
+    mute:    { x: 364, y: 10,  w: 44,  h: 40 },
+    hint:    { x: 420, y: 58,  w: 48,  h: 36 },
+    play:    { x: 140, y: 420, w: 200, h: 72 },
+    menuLevels: { x: 80,  y: 508, w: 150, h: 56 },
+    menuShop:   { x: 250, y: 508, w: 150, h: 56 },
+    menuMute:   { x: 416, y: 10,  w: 44,  h: 40 },
+    back:    { x: 16,  y: 10,  w: 100, h: 44 },
+    next:    { x: 250, y: 560, w: 150, h: 60 },
+    replay:  { x: 80,  y: 560, w: 150, h: 60 },
+    compLevels: { x: 165, y: 636, w: 150, h: 48 },
+    retry:   { x: 80,  y: 480, w: 150, h: 60 },
+    newPlan: { x: 250, y: 480, w: 150, h: 60 },
+    failLevels: { x: 165, y: 556, w: 150, h: 48 },
+    resume:  { x: 140, y: 330, w: 200, h: 60 },
+    pauseRestart: { x: 140, y: 406, w: 200, h: 60 },
+    pauseLevels:  { x: 140, y: 482, w: 200, h: 60 },
+    pauseMenu:    { x: 140, y: 558, w: 200, h: 60 }
+  };
+
+  function showToast(text, secs) {
+    toast = { text: text, t: secs || 2.2 };
+  }
+
+  // ============================== Level setup ==============================
+  function levelList(pack) {
+    return pack ? PACKS[pack].levels : LEVELS;
+  }
+  function loadLevel(pack, idx) {
+    levelPack = pack || null;
+    var list = levelList(levelPack);
+    levelIndex = clamp(idx, 0, list.length - 1);
+    levelDef = list[levelIndex];
+    var palette = paletteById(selectedColor).colors;
+    cars = [];
+    for (var i = 0; i < levelDef.cars.length; i++) {
+      var spec = levelDef.cars[i];
+      var type = CAR_TYPES[spec.t] || CAR_TYPES.small;
+      cars.push({
+        type: spec.t, speed: type.speed, len: type.len, wid: type.wid,
+        radius: type.rad, clearance: type.rad, pad: type.pad,
+        sx: spec.x, sy: spec.y, dx: spec.dx, dy: spec.dy,
+        x: spec.x, y: spec.y, heading: 0,
+        color: palette[i % palette.length],
+        path: null, cum: null, totalLen: 0, dist: 0, segIdx: 0,
+        moving: false, arrived: false, crashed: false, tilt: 0
+      });
+    }
+    // Decorative trees: seeded per level, on grass blocks away from roads,
+    // obstacles, starts and destinations. Cars pass UNDER tree canopies
+    // (trees draw after cars), so a path may cross a tree visually.
+    trees = [];
+    var seed = levelIndex * 97 + 13;
+    var tries = 0;
+    while (trees.length < 14 && tries < 200) {
+      tries++;
+      var tx = 30 + hash(seed + tries * 3) * 420;
+      var ty = 120 + hash(seed + tries * 7) * 560;
+      var ok = true;
+      for (var r = 0; r < ROAD_V.length; r++) if (Math.abs(tx - ROAD_V[r]) < 40) ok = false;
+      for (var h = 0; h < ROAD_H.length; h++) if (Math.abs(ty - ROAD_H[h]) < 40) ok = false;
+      for (var o = 0; o < levelDef.obs.length; o++) {
+        var ob = levelDef.obs[o];
+        if (tx > ob.x - 22 && tx < ob.x + ob.w + 22 && ty > ob.y - 22 && ty < ob.y + ob.h + 22) ok = false;
+      }
+      for (var c = 0; c < cars.length; c++) {
+        if (dist(tx, ty, cars[c].sx, cars[c].sy) < 46) ok = false;
+        if (dist(tx, ty, cars[c].dx, cars[c].dy) < 46) ok = false;
+      }
+      for (var tr = 0; tr < trees.length; tr++) {
+        if (dist(tx, ty, trees[tr].x, trees[tr].y) < 34) ok = false;
+      }
+      if (ok) trees.push({ x: tx, y: ty, r: 9 + hash(seed + tries * 11) * 5 });
+    }
+    retried = false;
+    redraws = 0;
+    crashCount = 0;
+    starPop = 0;
+    crashT = 0;
+    crashAt = null;
+    completeT = 0;
+    drawing = null;
+    hintPath = null;
+    usedHint = false;
+    panel = null;
+    phase = 'draw';
+    particles = [];
+    popups = [];
+    shakeT = 0;
+    AudioSys.engineStop();
+  }
+
+  function resetCarsToStart(keepPaths) {
+    for (var i = 0; i < cars.length; i++) {
+      var car = cars[i];
+      car.x = car.sx; car.y = car.sy;
+      car.dist = 0; car.segIdx = 0; car.heading = 0;
+      car.moving = false; car.arrived = false; car.crashed = false; car.tilt = 0;
+      if (!keepPaths) car.path = null;
+    }
+    phase = 'draw';
+    panel = null;
+    crashT = 0;
+    crashAt = null;
+    completeT = 0;
+    particles = [];
+    hintPath = null;
+    AudioSys.engineStop();
+  }
+
+  function allPathsReady() {
+    for (var i = 0; i < cars.length; i++) if (!cars[i].path) return false;
+    return cars.length > 0;
+  }
+
+  // ============================== Path geometry ==============================
+  function pointInBoard(x, y) {
+    return x >= BOARD.x + 4 && x <= BOARD.x + BOARD.w - 4 &&
+           y >= BOARD.y + 4 && y <= BOARD.y + BOARD.h - 4;
+  }
+  function pointBlockedByObs(x, y, inflate) {
+    for (var i = 0; i < levelDef.obs.length; i++) {
+      var o = levelDef.obs[i];
+      if (x > o.x - inflate && x < o.x + o.w + inflate &&
+          y > o.y - inflate && y < o.y + o.h + inflate) return true;
+    }
+    return false;
+  }
+  function pointBlockedByDest(x, y, selfCar, pathLen) {
+    // Another car's destination pad blocks this car's path (so a moving car
+    // never drives over a parked car). The first DEST_BLOCK_AFTER px of a
+    // path are exempt: a car may START inside another car's destination
+    // (level 7: head-on swap) and must be able to drive out of it.
+    if (pathLen < DEST_BLOCK_AFTER) return false;
+    for (var i = 0; i < cars.length; i++) {
+      var other = cars[i];
+      if (other === selfCar) continue;
+      var half = other.pad / 2 + 10; // bigger vehicles have bigger pads
+      if (Math.abs(x - other.dx) < half && Math.abs(y - other.dy) < half) return true;
+    }
+    return false;
+  }
+  function pointValidForPath(x, y, car, pathLen) {
+    if (!pointInBoard(x, y)) return false;
+    if (pointBlockedByObs(x, y, car.clearance)) return false;
+    if (pointBlockedByDest(x, y, car, pathLen)) return false;
+    return true;
+  }
+  function segmentValidForPath(x1, y1, x2, y2, car, pathLen) {
+    // Sample the segment so a fast finger cannot jump over an obstacle.
+    var d = dist(x1, y1, x2, y2);
+    var steps = Math.max(1, Math.ceil(d / 6));
+    for (var i = 1; i <= steps; i++) {
+      var f = i / steps;
+      if (!pointValidForPath(x1 + (x2 - x1) * f, y1 + (y2 - y1) * f, car, pathLen + d * f)) return false;
+    }
+    return true;
+  }
+  function smoothPath(pts) {
+    // Two light smoothing passes; endpoints fixed. If smoothing pushes a
+    // point into an obstacle, fall back to the raw points.
+    var out = pts;
+    for (var pass = 0; pass < 2; pass++) {
+      var next = [out[0]];
+      for (var i = 1; i < out.length - 1; i++) {
+        next.push({
+          x: (out[i - 1].x + 2 * out[i].x + out[i + 1].x) / 4,
+          y: (out[i - 1].y + 2 * out[i].y + out[i + 1].y) / 4
+        });
+      }
+      next.push(out[out.length - 1]);
+      out = next;
+    }
+    return out;
+  }
+  function finalizePath(car, pts) {
+    // pts: raw drawn points (first = car start). Smooth, validate, and
+    // attach cumulative lengths. Returns true on success.
+    if (pts.length < 2) return false;
+    var smoothed = smoothPath(pts);
+    for (var i = 0; i < smoothed.length; i++) {
+      if (!pointInBoard(smoothed[i].x, smoothed[i].y) ||
+          pointBlockedByObs(smoothed[i].x, smoothed[i].y, car.clearance - 4)) {
+        smoothed = pts; // smoothing clipped an obstacle: keep the raw path
+        break;
+      }
+    }
+    var cum = [0];
+    var total = 0;
+    for (var j = 1; j < smoothed.length; j++) {
+      total += dist(smoothed[j - 1].x, smoothed[j - 1].y, smoothed[j].x, smoothed[j].y);
+      cum.push(total);
+    }
+    car.path = smoothed;
+    car.cum = cum;
+    car.totalLen = total;
+    car.dist = 0;
+    car.segIdx = 0;
+    // Face the route while waiting for GO.
+    car.heading = Math.atan2(smoothed[1].y - smoothed[0].y, smoothed[1].x - smoothed[0].x);
+    return true;
+  }
+  function pointAtPath(car, d) {
+    // Position + heading at distance d along the car's path.
+    var pts = car.path, cum = car.cum;
+    if (!pts || pts.length === 0) return { x: car.sx, y: car.sy, heading: 0 };
+    if (d <= 0) {
+      var h0 = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+      return { x: pts[0].x, y: pts[0].y, heading: h0 };
+    }
+    if (d >= car.totalLen) {
+      var last = pts[pts.length - 1], prev = pts[pts.length - 2];
+      return { x: last.x, y: last.y, heading: Math.atan2(last.y - prev.y, last.x - prev.x) };
+    }
+    var i = car.segIdx;
+    while (i < cum.length - 2 && cum[i + 1] < d) i++;
+    while (i > 0 && cum[i] > d) i--;
+    car.segIdx = i;
+    var segLen = cum[i + 1] - cum[i];
+    var f = segLen > 0 ? (d - cum[i]) / segLen : 0;
+    return {
+      x: pts[i].x + (pts[i + 1].x - pts[i].x) * f,
+      y: pts[i].y + (pts[i + 1].y - pts[i].y) * f,
+      heading: Math.atan2(pts[i + 1].y - pts[i].y, pts[i + 1].x - pts[i].x)
+    };
+  }
+
+  // ============================== Hint solver (in-game A*) ==============================
+  // A hint reveals ONE car's route as a dashed guide. The solver is a small
+  // A* over a 16px grid (same geometry as the test solver), reusing the
+  // game's own blocking rules (pointValidForPath / segmentValidForPath),
+  // plus a penalty near other cars' already-drawn paths so the guide keeps
+  // its distance where possible. The guide shows a VALID route; the timing
+  // at crossings is still the player's puzzle.
+  var HINT_CELL = 16, HINT_NX = 28, HINT_NY = 36;
+  function hintCellCenter(i, j) {
+    return { x: BOARD.x + (i + 0.5) * HINT_CELL, y: BOARD.y + (j + 0.5) * HINT_CELL };
+  }
+  function hintToCell(x, y) {
+    return {
+      i: clamp(Math.floor((x - BOARD.x) / HINT_CELL), 0, HINT_NX - 1),
+      j: clamp(Math.floor((y - BOARD.y) / HINT_CELL), 0, HINT_NY - 1)
+    };
+  }
+  function solveHintPath(car) {
+    var start = { x: car.sx, y: car.sy };
+    var goal = { x: car.dx, y: car.dy };
+    // Penalty grid: cells near other cars' drawn paths cost extra.
+    var pen = [];
+    for (var pi = 0; pi < HINT_NX; pi++) { pen.push([]); for (var pj = 0; pj < HINT_NY; pj++) pen[pi].push(0); }
+    for (var oi = 0; oi < cars.length; oi++) {
+      var other = cars[oi];
+      if (other === car || !other.path) continue;
+      for (var pp = 0; pp < other.path.length; pp++) {
+        var c = hintToCell(other.path[pp].x, other.path[pp].y);
+        for (var di = -2; di <= 2; di++) for (var dj = -2; dj <= 2; dj++) {
+          var ii = c.i + di, jj = c.j + dj;
+          if (ii >= 0 && ii < HINT_NX && jj >= 0 && jj < HINT_NY) pen[ii][jj] = 4;
+        }
+      }
+    }
+    function blocked(i, j) {
+      var p = hintCellCenter(i, j);
+      // pathLen ~ straight-line distance from the start (conservative: the
+      // real path is longer, so the dest exemption is, if anything, smaller
+      // than the game's own rule — and start/goal cells are forced open).
+      return !pointValidForPath(p.x, p.y, car, dist(p.x, p.y, start.x, start.y));
+    }
+    var sc = hintToCell(start.x, start.y), gc = hintToCell(goal.x, goal.y);
+    var key = function (i, j) { return i + ',' + j; };
+    var open = [{ i: sc.i, j: sc.j, f: 0 }];
+    var came = {}, gScore = {};
+    came[key(sc.i, sc.j)] = null;
+    gScore[key(sc.i, sc.j)] = 0;
+    var found = false;
+    var NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
+              [1, 1, 1.4142], [1, -1, 1.4142], [-1, 1, 1.4142], [-1, -1, 1.4142]];
+    while (open.length > 0) {
+      var best = 0;
+      for (var bi = 1; bi < open.length; bi++) if (open[bi].f < open[best].f) best = bi;
+      var cur = open.splice(best, 1)[0];
+      if (cur.i === gc.i && cur.j === gc.j) { found = true; break; }
+      for (var n = 0; n < NB.length; n++) {
+        var ni = cur.i + NB[n][0], nj = cur.j + NB[n][1];
+        if (ni < 0 || ni >= HINT_NX || nj < 0 || nj >= HINT_NY) continue;
+        if (!(ni === sc.i && nj === sc.j) && !(ni === gc.i && nj === gc.j) && blocked(ni, nj)) continue;
+        if (NB[n][0] !== 0 && NB[n][1] !== 0) {
+          // No corner cutting.
+          if (blocked(cur.i + NB[n][0], cur.j) || blocked(cur.i, cur.j + NB[n][1])) continue;
+        }
+        var ng = gScore[key(cur.i, cur.j)] + NB[n][2] + pen[ni][nj];
+        var nk = key(ni, nj);
+        if (gScore[nk] === undefined || ng < gScore[nk]) {
+          gScore[nk] = ng;
+          came[nk] = key(cur.i, cur.j);
+          var h = Math.sqrt((gc.i - ni) * (gc.i - ni) + (gc.j - nj) * (gc.j - nj));
+          open.push({ i: ni, j: nj, f: ng + h });
+        }
+      }
+    }
+    if (!found) return null;
+    var pts = [start];
+    var ck = key(gc.i, gc.j);
+    var cells = [];
+    while (ck) {
+      var parts = ck.split(',');
+      cells.push(hintCellCenter(parseInt(parts[0], 10), parseInt(parts[1], 10)));
+      ck = came[ck];
+    }
+    cells.reverse();
+    for (var ci = 0; ci < cells.length; ci++) pts.push(cells[ci]);
+    pts.push(goal);
+    // Shortcut: greedily jump to the farthest reachable waypoint (same
+    // idea as the test solver), keeping clear of penalized cells.
+    function segOk(a, b, lenSoFar) {
+      var d = dist(a.x, a.y, b.x, b.y);
+      var steps = Math.max(1, Math.ceil(d / 6));
+      for (var s = 1; s <= steps; s++) {
+        var f = s / steps;
+        var x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
+        if (!pointValidForPath(x, y, car, lenSoFar + d * f)) return false;
+        var cc = hintToCell(x, y);
+        if (pen[cc.i][cc.j] > 0) return false;
+      }
+      return true;
+    }
+    var out = [pts[0]];
+    var oi2 = 0, lenSoFar = 0;
+    while (oi2 < pts.length - 1) {
+      var j = pts.length - 1;
+      while (j > oi2 + 1 && !segOk(pts[oi2], pts[j], lenSoFar)) j--;
+      lenSoFar += dist(pts[oi2].x, pts[oi2].y, pts[j].x, pts[j].y);
+      out.push(pts[j]);
+      oi2 = j;
+    }
+    return out;
+  }
+
+  function useHint() {
+    if (state !== 'playing' || phase !== 'draw') return;
+    if (hints <= 0) {
+      AudioSys.denied();
+      showToast(t('noHints'), 2.6);
+      return;
+    }
+    var target = null;
+    for (var i = 0; i < cars.length; i++) {
+      if (!cars[i].path) { target = cars[i]; break; }
+    }
+    if (!target) {
+      showToast(t('allPathsHint'), 2);
+      return;
+    }
+    var pts = solveHintPath(target);
+    if (!pts || pts.length < 2) {
+      AudioSys.denied();
+      showToast(t('hintFail'), 2);
+      return;
+    }
+    hints--;
+    usedHint = true;
+    hintPath = { car: target, pts: pts };
+    Bridge.saveProgress('hints', hints);
+    AudioSys.ding();
+    showToast(t('hintShown'), 2.4);
+  }
+
+  // ============================== Game flow ==============================
+  function startRun() {
+    if (phase !== 'draw' || !allPathsReady()) return;
+    toast = null;
+    phase = 'run';
+    for (var i = 0; i < cars.length; i++) {
+      cars[i].moving = true;
+      cars[i].dist = 0;
+      cars[i].segIdx = 0;
+    }
+    AudioSys.vroom();
+    AudioSys.horn();
+    AudioSys.engineStart();
+    Bridge.send('level_started');
+  }
+
+  function computeStars() {
+    if (retried) return 1;
+    if (redraws > 0 || usedHint) return 2;
+    return 3;
+  }
+
+  function missionProgress(def) {
+    if (def.id === 'levels10') {
+      var n = 0;
+      for (var i = 0; i < stars.length; i++) if (stars[i] > 0) n++;
+      return n;
+    }
+    return mProgress[def.id] || 0;
+  }
+
+  function completeLevel() {
+    // Called once when all cars arrive (or via the debug simulateWin hook).
+    var s = computeStars();
+    lastStars = s;
+    var reward = COIN_BASE + COIN_PER_STAR * s;
+    lastCoins = reward;
+    coins += reward;
+    var idx = globalLevelIndex(levelPack, levelIndex);
+    var isNewBest = (stars[idx] || 0) < s;
+    stars[idx] = Math.max(stars[idx] || 0, s);
+    if (levelPack) {
+      // Pack levels unlock progressively inside their pack (cap 5).
+      var nextPack = Math.min(5, levelIndex + 2);
+      if (nextPack > (packUnlocked[levelPack] || 0)) {
+        packUnlocked[levelPack] = nextPack;
+        Bridge.saveProgress('packs', packUnlocked);
+      }
+    } else {
+      var newUnlock = Math.min(LEVELS.length, idx + 2);
+      if (newUnlock > unlocked) unlocked = newUnlock;
+    }
+    // Missions: no-crash completions and 3-star completions count here.
+    // levels10 is derived from the stars array. Each mission pays ONCE
+    // (tracked in mProgress.done) — otherwise levels10 would pay on every
+    // completion after the 10th unique level.
+    if (!mProgress.done) mProgress.done = {};
+    if (crashCount === 0) mProgress.nocoll5 = Math.min(5, mProgress.nocoll5 + 1);
+    if (s === 3) mProgress.stars3 = Math.min(3, mProgress.stars3 + 1);
+    var newlyDone = [];
+    for (var mi = 0; mi < MISSION_DEFS.length; mi++) {
+      var def = MISSION_DEFS[mi];
+      if (!mProgress.done[def.id] && missionProgress(def) >= def.target) {
+        mProgress.done[def.id] = true;
+        coins += def.reward;
+        newlyDone.push(def);
+      }
+    }
+    if (newlyDone.length > 0) {
+      var totalReward = 0;
+      for (var ri = 0; ri < newlyDone.length; ri++) totalReward += newlyDone[ri].reward;
+      missionToast = { text: t(newlyDone[0].name) + ' +' + totalReward, t: 3.5 };
+    }
+    starPop = 0;
+    Bridge.saveProgress('coins', coins);
+    Bridge.saveProgress('stars', stars);
+    Bridge.saveProgress('unlocked', unlocked);
+    Bridge.saveProgress('mprogress', mProgress);
+    levelsCompleted++;
+    if (isNewBest) Bridge.send('player_got_achievement');
+    Bridge.send('level_completed');
+    if (levelsCompleted % 3 === 0) Bridge.showInterstitial();
+  }
+
+  function triggerCrash(a, b) {
+    phase = 'crashed';
+    crashT = 0;
+    crashCount++;
+    AudioSys.engineStop();
+    var cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    crashAt = { x: cx, y: cy };
+    a.crashed = true; b.crashed = true;
+    a.moving = false; b.moving = false;
+    a.tilt = 0.5; b.tilt = -0.5;
+    for (var i = 0; i < cars.length; i++) cars[i].moving = false;
+    shakeT = 0.45;
+    AudioSys.crash();
+    Bridge.send('level_failed');
+    // Explosion particles + smoke.
+    for (var p = 0; p < 22; p++) {
+      var ang = Math.random() * Math.PI * 2;
+      var sp = 40 + Math.random() * 120;
+      particles.push({
+        x: cx, y: cy, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30,
+        life: 0, maxLife: 0.5 + Math.random() * 0.4,
+        size: 4 + Math.random() * 7,
+        color: pick(['#ff9800', '#ff5722', '#ffeb3b', '#795548']), kind: 'boom'
+      });
+    }
+    for (var s = 0; s < 10; s++) {
+      particles.push({
+        x: cx + rand(-12, 12), y: cy + rand(-12, 12),
+        vx: rand(-8, 8), vy: rand(-45, -20),
+        life: 0, maxLife: 1.2 + Math.random() * 0.8,
+        size: 8 + Math.random() * 10, color: 'rgba(120,120,120,0.55)', kind: 'smoke'
+      });
+    }
+  }
+
+  function retryLevel(keepPaths) {
+    // Note: the caller counts redraws when paths are cleared (star rule).
+    retried = true;
+    resetCarsToStart(keepPaths);
+    AudioSys.click();
+  }
+
+  function clearCarPath(car) {
+    if (car.path) {
+      redraws++;
+      car.path = null;
+      car.cum = null;
+      car.totalLen = 0;
+      AudioSys.click();
+    }
+  }
+
+  function goToMenu() {
+    state = 'menu';
+    panel = null;
+    AudioSys.engineStop();
+    AudioSys.click();
+  }
+  function goToLevels() {
+    state = 'levels';
+    panel = null;
+    AudioSys.engineStop();
+    AudioSys.click();
+  }
+  function goToShop(tab) {
+    shopTab = tab || shopTab;
+    state = 'shop';
+    panel = null;
+    AudioSys.engineStop();
+    AudioSys.click();
+  }
+  function playLevel(idx) {
+    loadLevel(null, idx);
+    state = 'playing';
+    AudioSys.click();
+    if (idx === 0) showToast(t('drawHint'), 3);
+  }
+  function playPackLevel(pack, idx) {
+    loadLevel(pack, idx);
+    state = 'playing';
+    AudioSys.click();
+  }
+  function nextLevel() {
+    var list = levelList(levelPack);
+    if (levelIndex + 1 < list.length) {
+      if (levelPack) playPackLevel(levelPack, levelIndex + 1);
+      else playLevel(levelIndex + 1);
+    } else {
+      if (levelPack) selectTab = levelPack;
+      goToLevels();
+    }
+  }
+
+  function pauseGame(by) {
+    if (state !== 'playing') return;
+    pausedFrom = 'playing';
+    pausedBy = by || 'user';
+    state = 'paused';
+    AudioSys.setPaused(true);
+    Bridge.send('level_paused');
+  }
+  function resumeGame() {
+    if (state !== 'paused') return;
+    state = pausedFrom;
+    AudioSys.setPaused(false);
+    AudioSys.click();
+    Bridge.send('level_resumed');
+  }
+  function onPlatformPause(isPaused) {
+    if (isPaused) {
+      if (state === 'playing') pauseGame('platform');
+    } else {
+      if (state === 'paused' && pausedBy === 'platform') resumeGame();
+    }
+  }
+  function toggleMute() {
+    AudioSys.setUserMuted(!AudioSys.userMuted);
+    Bridge.saveProgress('muted', AudioSys.userMuted ? '1' : '0');
+    AudioSys.click();
+  }
+
+  // ============================== Shop ==============================
+  // Every purchase deducts coins immediately, persists, and plays the coin
+  // sound. Insufficient coins are refused gracefully (denied sound + toast,
+  // nothing changes). Buying a palette or a map selects it right away.
+  function spendCoins(price) {
+    if (coins < price) {
+      AudioSys.denied();
+      showToast(t('notEnoughCoins'), 2.2);
+      return false;
+    }
+    coins -= price;
+    Bridge.saveProgress('coins', coins);
+    AudioSys.coin();
+    return true;
+  }
+  function buyHints(qty, price) {
+    if (!spendCoins(price)) return;
+    hints += qty;
+    Bridge.saveProgress('hints', hints);
+    showToast(t('purchased') + ' +' + qty + ' ' + t('hintName'), 2.2);
+  }
+  function buyPack(packId) {
+    if (packUnlocked[packId] > 0) return; // already owned
+    var price = packId === 'truck' ? SHOP.packTruck.price : SHOP.packBus.price;
+    if (!spendCoins(price)) return;
+    packUnlocked[packId] = 1; // first level of the pack unlocked
+    Bridge.saveProgress('packs', packUnlocked);
+    showToast(t('purchased') + ' — ' + t(packId === 'truck' ? 'truckPack' : 'busPack'), 2.6);
+  }
+  function buyPalette(id) {
+    var pal = paletteById(id);
+    if (ownedColors.indexOf(id) !== -1) { selectPalette(id); return; }
+    if (!spendCoins(pal.price)) return;
+    ownedColors.push(id);
+    selectPalette(id);
+    showToast(t('purchased') + ' — ' + t('pal' + id.charAt(0).toUpperCase() + id.slice(1)), 2.2);
+  }
+  function selectPalette(id) {
+    if (ownedColors.indexOf(id) === -1) return;
+    selectedColor = id;
+    Bridge.saveProgress('colors', { owned: ownedColors, selected: selectedColor });
+    AudioSys.click();
+  }
+  function buyMap(id) {
+    if (ownedMaps.indexOf(id) !== -1) { selectMap(id); return; }
+    if (!spendCoins(THEMES[id].price)) return;
+    ownedMaps.push(id);
+    selectMap(id);
+    showToast(t('purchased') + ' — ' + t('map' + id.charAt(0).toUpperCase() + id.slice(1)), 2.2);
+  }
+  function selectMap(id) {
+    if (ownedMaps.indexOf(id) === -1) return;
+    selectedMap = id;
+    Bridge.saveProgress('maps', { owned: ownedMaps, selected: selectedMap });
+    AudioSys.click();
+  }
+
+  // ============================== Update ==============================
+  function updatePlaying(dt) {
+    if (shakeT > 0) shakeT -= dt;
+    updateParticles(dt);
+    updatePopups(dt);
+    if (phase === 'run') {
+      var allArrived = true;
+      var speedSum = 0, speedN = 0;
+      for (var i = 0; i < cars.length; i++) {
+        var car = cars[i];
+        if (car.arrived || car.crashed) continue;
+        allArrived = false;
+        if (!car.moving) continue;
+        speedSum += car.speed; speedN++;
+        car.dist += car.speed * dt;
+        if (car.dist >= car.totalLen) {
+          car.dist = car.totalLen;
+          car.arrived = true;
+          car.moving = false;
+          var pos = pointAtPath(car, car.totalLen);
+          car.x = pos.x; car.y = pos.y; car.heading = pos.heading;
+          AudioSys.arrive();
+          spawnConfetti(car.dx, car.dy, car.color);
+          popups.push({ x: car.dx, y: car.dy - 34, text: 'OK!', t: 1.2, color: car.color });
+        } else {
+          var p = pointAtPath(car, car.dist);
+          car.x = p.x; car.y = p.y; car.heading = p.heading;
+        }
+      }
+      // Engine pitch follows the average speed of the moving cars.
+      if (speedN > 0) AudioSys.engineSet(speedSum / speedN);
+      // Collisions: only between cars still moving. Arrived cars are parked
+      // safely in their destination and cannot be hit. A crash happens
+      // when two centers are closer than the SUM of their radii, so the
+      // bigger truck and bus genuinely need more room.
+      for (var a = 0; a < cars.length; a++) {
+        for (var b = a + 1; b < cars.length; b++) {
+          var ca = cars[a], cb = cars[b];
+          if (ca.moving && cb.moving &&
+              dist(ca.x, ca.y, cb.x, cb.y) < ca.radius + cb.radius) {
+            triggerCrash(ca, cb);
+            return;
+          }
+        }
+      }
+      if (allArrived) {
+        phase = 'complete';
+        completeT = 0;
+        AudioSys.engineStop();
+        AudioSys.win();
+        completeLevel();
+      }
+    } else if (phase === 'crashed') {
+      crashT += dt;
+      if (crashT > 1.0 && !panel) panel = 'failed';
+    } else if (phase === 'complete') {
+      completeT += dt;
+      if (completeT > 0.9 && !panel) {
+        panel = 'complete';
+        AudioSys.coin();
+      }
+    }
+  }
+
+  function updateMenu(dt) {
+    // Decorative cars loop around the road grid.
+    for (var i = 0; i < menuCars.length; i++) {
+      var mc = menuCars[i];
+      var total = 0;
+      var segLens = [];
+      for (var s = 0; s < mc.pts.length; s++) {
+        var a = mc.pts[s], b = mc.pts[(s + 1) % mc.pts.length];
+        var l = dist(a.x, a.y, b.x, b.y);
+        segLens.push(l);
+        total += l;
+      }
+      mc.dist = (mc.dist + mc.speed * dt) % total;
+      var d = mc.dist, idx = 0;
+      while (d > segLens[idx]) { d -= segLens[idx]; idx = (idx + 1) % mc.pts.length; }
+      var p0 = mc.pts[idx], p1 = mc.pts[(idx + 1) % mc.pts.length];
+      var f = segLens[idx] > 0 ? d / segLens[idx] : 0;
+      mc.x = p0.x + (p1.x - p0.x) * f;
+      mc.y = p0.y + (p1.y - p0.y) * f;
+      mc.heading = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+    }
+    updateParticles(dt);
+    updatePopups(dt);
+  }
+
+  function updateParticles(dt) {
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.life += dt;
+      if (p.life >= p.maxLife) { particles.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.kind === 'boom') { p.vx *= 0.92; p.vy = p.vy * 0.92 + 60 * dt; }
+      if (p.kind === 'confetti') { p.vy += 220 * dt; p.rot = (p.rot || 0) + p.vr * dt; }
+    }
+  }
+  function updatePopups(dt) {
+    for (var i = popups.length - 1; i >= 0; i--) {
+      popups[i].t -= dt;
+      popups[i].y -= 22 * dt;
+      if (popups[i].t <= 0) popups.splice(i, 1);
+    }
+  }
+  function spawnConfetti(x, y, color) {
+    for (var i = 0; i < 14; i++) {
+      particles.push({
+        x: x, y: y,
+        vx: rand(-90, 90), vy: rand(-160, -40),
+        life: 0, maxLife: 0.9 + Math.random() * 0.5,
+        size: 3 + Math.random() * 4,
+        color: pick([color, '#ffffff', '#ffd54f', '#4fc3f7']),
+        kind: 'confetti', rot: Math.random() * 3, vr: rand(-8, 8)
+      });
+    }
+  }
+
+  // ============================== Input ==============================
+  function carAtPoint(x, y, radius) {
+    for (var i = 0; i < cars.length; i++) {
+      if (dist(x, y, cars[i].x, cars[i].y) < radius) return cars[i];
+    }
+    return null;
+  }
+
+  function onPointerDown(e) {
+    AudioSys.unlock();
+    var p = toLogical(e);
+    if (state === 'menu') {
+      if (hit(p.x, p.y, BTN.play)) { playLevel(unlocked - 1); return; }
+      if (hit(p.x, p.y, BTN.menuLevels)) { goToLevels(); return; }
+      if (hit(p.x, p.y, BTN.menuShop)) { goToShop(); return; }
+      if (hit(p.x, p.y, BTN.menuMute)) { toggleMute(); return; }
+      return;
+    }
+    if (state === 'shop') {
+      if (hit(p.x, p.y, BTN.back)) { goToMenu(); return; }
+      var tab = shopTabAt(p.x, p.y);
+      if (tab) { shopTab = tab; AudioSys.click(); return; }
+      var action = shopActionAt(p.x, p.y);
+      if (action) { doShopAction(action); return; }
+      return;
+    }
+    if (state === 'levels') {
+      if (hit(p.x, p.y, BTN.back)) { goToMenu(); return; }
+      var ltab = selectTabAt(p.x, p.y);
+      if (ltab) { selectTab = ltab; AudioSys.click(); return; }
+      if (selectTab !== 'main') {
+        // Pack tab: BUY (locked) or PLAY PACK (owned) button.
+        if (hit(p.x, p.y, packActionRect())) {
+          if (packUnlocked[selectTab] > 0) {
+            var firstUnplayed = 0;
+            for (var pi = 0; pi < 5; pi++) {
+              if (!(stars[globalLevelIndex(selectTab, pi)] > 0)) { firstUnplayed = pi; break; }
+              firstUnplayed = pi;
+            }
+            var startIdx = Math.min(firstUnplayed, (packUnlocked[selectTab] || 1) - 1);
+            playPackLevel(selectTab, startIdx);
+          } else {
+            buyPack(selectTab);
+          }
+          return;
+        }
+      }
+      var cell = levelCellAt(p.x, p.y);
+      if (cell !== null) {
+        if (selectTab === 'main') {
+          var n = cell + 1;
+          if (n <= unlocked) playLevel(cell);
+          else { AudioSys.denied(); }
+        } else {
+          if (cell + 1 <= (packUnlocked[selectTab] || 0)) playPackLevel(selectTab, cell);
+          else { AudioSys.denied(); }
+        }
+      }
+      return;
+    }
+    if (state === 'paused') {
+      if (hit(p.x, p.y, BTN.resume)) { resumeGame(); return; }
+      if (hit(p.x, p.y, BTN.pauseRestart)) { loadLevel(levelPack, levelIndex); state = 'playing'; AudioSys.setPaused(false); AudioSys.click(); return; }
+      if (hit(p.x, p.y, BTN.pauseLevels)) { AudioSys.setPaused(false); goToLevels(); return; }
+      if (hit(p.x, p.y, BTN.pauseMenu)) { AudioSys.setPaused(false); goToMenu(); return; }
+      return;
+    }
+    if (state !== 'playing') return;
+    // Panels first (complete / failed).
+    if (panel === 'complete') {
+      if (hit(p.x, p.y, BTN.next)) { nextLevel(); return; }
+      if (hit(p.x, p.y, BTN.replay)) { playLevel(levelIndex); return; }
+      if (hit(p.x, p.y, BTN.compLevels)) { goToLevels(); return; }
+      return;
+    }
+    if (panel === 'failed') {
+      if (hit(p.x, p.y, BTN.retry)) { retryLevel(true); return; }
+      if (hit(p.x, p.y, BTN.newPlan)) {
+        // New plan: clear all paths, then retry (redraws counted below).
+        for (var i = 0; i < cars.length; i++) if (cars[i].path) redraws++;
+        retryLevel(false);
+        return;
+      }
+      if (hit(p.x, p.y, BTN.failLevels)) { goToLevels(); return; }
+      return;
+    }
+    // Top-bar buttons.
+    if (hit(p.x, p.y, BTN.pause)) { pauseGame('user'); return; }
+    if (hit(p.x, p.y, BTN.mute)) { toggleMute(); return; }
+    if (hit(p.x, p.y, BTN.hint)) { useHint(); return; }
+    // Bottom-bar buttons.
+    if (hit(p.x, p.y, BTN.go)) {
+      if (phase === 'draw') {
+        if (allPathsReady()) startRun();
+        else { AudioSys.denied(); showToast(t('drawHint')); }
+      }
+      return;
+    }
+    if (hit(p.x, p.y, BTN.reset)) {
+      if (phase === 'draw') {
+        var had = false;
+        for (var j = 0; j < cars.length; j++) {
+          if (cars[j].path) { redraws++; cars[j].path = null; cars[j].cum = null; had = true; }
+        }
+        if (had) AudioSys.click(); else AudioSys.denied();
+      } else if (phase === 'run') {
+        retried = true;
+        resetCarsToStart(true);
+        AudioSys.click();
+      }
+      return;
+    }
+    if (hit(p.x, p.y, BTN.levels)) { goToLevels(); return; }
+    // Path drawing: only in the draw phase, starting on/near a car.
+    if (phase === 'draw') {
+      var car = carAtPoint(p.x, p.y, 36);
+      if (car) {
+        drawing = {
+          car: car,
+          pts: [{ x: car.sx, y: car.sy }],
+          len: 0,
+          downX: p.x, downY: p.y, downT: Date.now(), moved: false
+        };
+      }
+    }
+  }
+
+  function onPointerMove(e) {
+    if (!drawing) return;
+    if (e.cancelable) e.preventDefault();
+    var p = toLogical(e);
+    var car = drawing.car;
+    if (dist(p.x, p.y, drawing.downX, drawing.downY) > 10) drawing.moved = true;
+    var last = drawing.pts[drawing.pts.length - 1];
+    var d = dist(last.x, last.y, p.x, p.y);
+    if (d < DRAW_MIN_STEP) return;
+    if (drawing.len + d > MAX_PATH_LEN || drawing.pts.length >= MAX_PATH_PTS) return;
+    if (!segmentValidForPath(last.x, last.y, p.x, p.y, car, drawing.len)) {
+      var now = Date.now();
+      if (now - toastBlockedAt > 1200) {
+        toastBlockedAt = now;
+        showToast(t('blocked'), 1.2);
+        AudioSys.denied();
+      }
+      return; // path stops at the obstacle; the player can steer around it
+    }
+    drawing.pts.push({ x: p.x, y: p.y });
+    drawing.len += d;
+    AudioSys.drawTick();
+  }
+
+  function onPointerUp(e) {
+    if (!drawing) return;
+    var car = drawing.car;
+    var p = toLogical(e);
+    var wasTap = !drawing.moved && (Date.now() - drawing.downT) < 500;
+    if (wasTap) {
+      // Tap a car: clear its path (if it has one).
+      if (car.path) {
+        clearCarPath(car);
+        showToast(t('tapCarClear'), 1.4);
+      }
+      drawing = null;
+      return;
+    }
+    var last = drawing.pts[drawing.pts.length - 1];
+    if (dist(last.x, last.y, car.dx, car.dy) <= DEST_SNAP) {
+      // Snap the end to the destination center and complete the path.
+      var replacing = !!car.path;
+      drawing.pts.push({ x: car.dx, y: car.dy });
+      if (finalizePath(car, drawing.pts)) {
+        if (replacing) redraws++;
+        if (hintPath && hintPath.car === car) hintPath = null;
+        AudioSys.ding();
+        if (allPathsReady()) showToast(t('allPathsHint'), 2.2);
+      }
+    } else {
+      // Incomplete draft: discard it (the old path, if any, stays).
+      AudioSys.denied();
+      showToast(t('drawToDest'), 2);
+    }
+    drawing = null;
+  }
+
+  function levelCellAt(x, y) {
+    // Level select grid: 5 cols x 6 rows (main) or 1 row of 5 (pack tab),
+    // cells 72x72, gap 14, origin (32, 150).
+    var ox = 32, oy = 150, cw = 72, ch = 72, gap = 14;
+    var count = selectTab === 'main' ? LEVELS.length : 5;
+    for (var i = 0; i < count; i++) {
+      var col = i % 5, row = Math.floor(i / 5);
+      var rx = ox + col * (cw + gap), ry = oy + row * (ch + gap);
+      if (x >= rx && x <= rx + cw && y >= ry && y <= ry + ch) return i;
+    }
+    return null;
+  }
+
+  // Level-select tabs: SUBURB (main 30) | TRUCK | BUS.
+  var SELECT_TABS = [
+    { id: 'main', r: { x: 16, y: 92, w: 146, h: 36 } },
+    { id: 'truck', r: { x: 168, y: 92, w: 146, h: 36 } },
+    { id: 'bus', r: { x: 320, y: 92, w: 146, h: 36 } }
+  ];
+  function selectTabAt(x, y) {
+    for (var i = 0; i < SELECT_TABS.length; i++) {
+      if (hit(x, y, SELECT_TABS[i].r)) return SELECT_TABS[i].id;
+    }
+    return null;
+  }
+  function packActionRect() { return { x: 140, y: 480, w: 200, h: 56 }; }
+
+  // Shop layout (shared by render + input so the buttons always match).
+  var SHOP_TABS = [
+    { id: 'hints', r: { x: 16, y: 124, w: 104, h: 36 } },
+    { id: 'packs', r: { x: 128, y: 124, w: 104, h: 36 } },
+    { id: 'colors', r: { x: 240, y: 124, w: 104, h: 36 } },
+    { id: 'maps', r: { x: 352, y: 124, w: 104, h: 36 } }
+  ];
+  function shopTabAt(x, y) {
+    for (var i = 0; i < SHOP_TABS.length; i++) {
+      if (hit(x, y, SHOP_TABS[i].r)) return SHOP_TABS[i].id;
+    }
+    return null;
+  }
+  function shopActionAt(x, y) {
+    if (shopTab === 'hints') {
+      if (hit(x, y, { x: 336, y: 258, w: 104, h: 44 })) return 'hint1';
+      if (hit(x, y, { x: 336, y: 394, w: 104, h: 44 })) return 'hint5';
+    } else if (shopTab === 'packs') {
+      if (hit(x, y, { x: 180, y: 312, w: 150, h: 40 })) return 'pack:truck';
+      if (hit(x, y, { x: 180, y: 508, w: 150, h: 40 })) return 'pack:bus';
+    } else if (shopTab === 'colors') {
+      for (var i = 0; i < PALETTES.length; i++) {
+        var ry = 176 + i * 90;
+        if (hit(x, y, { x: 352, y: ry + 20, w: 96, h: 44 })) return 'color:' + PALETTES[i].id;
+      }
+    } else if (shopTab === 'maps') {
+      for (var m = 0; m < MAP_ORDER.length; m++) {
+        var my = 176 + m * 132;
+        if (hit(x, y, { x: 352, y: my + 38, w: 96, h: 44 })) return 'map:' + MAP_ORDER[m];
+      }
+    }
+    return null;
+  }
+  function doShopAction(action) {
+    if (action === 'hint1') buyHints(SHOP.hintSingle.qty, SHOP.hintSingle.price);
+    else if (action === 'hint5') buyHints(SHOP.hintPack.qty, SHOP.hintPack.price);
+    else if (action === 'pack:truck') buyPack('truck');
+    else if (action === 'pack:bus') buyPack('bus');
+    else if (action.indexOf('color:') === 0) buyPalette(action.slice(6));
+    else if (action.indexOf('map:') === 0) buyMap(action.slice(4));
+  }
+
+  function onKeyDown(e) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      if (e.repeat) return;
+      AudioSys.unlock();
+      if (state === 'menu') playLevel(unlocked - 1);
+      else if (state === 'playing' && panel === 'complete') nextLevel();
+      else if (state === 'playing' && panel === 'failed') retryLevel(true);
+      else if (state === 'playing' && phase === 'draw') startRun();
+      else if (state === 'paused') resumeGame();
+    } else if (e.code === 'KeyP' || e.code === 'Escape') {
+      if (state === 'playing') pauseGame('user');
+      else if (state === 'paused') resumeGame();
+    } else if (e.code === 'KeyM') {
+      toggleMute();
+    }
+  }
+
+  function setupInput() {
+    canvas.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('keydown', onKeyDown);
+    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden && state === 'playing') pauseGame('tab');
+    });
+    window.addEventListener('blur', function () {
+      if (state === 'playing') pauseGame('tab');
+    });
+    window.addEventListener('resize', resize);
+  }
+
+  // ============================== Rendering ==============================
+  var starPop = 0; // stars already popped (with sound) on the complete panel
+
+  function drawCoinIcon(c, x, y, r) {
+    c.beginPath();
+    c.arc(x, y, r, 0, Math.PI * 2);
+    c.fillStyle = '#ffc107';
+    c.fill();
+    c.lineWidth = 2;
+    c.strokeStyle = '#d89a00';
+    c.stroke();
+    c.beginPath();
+    c.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, Math.PI * 2);
+    c.fillStyle = 'rgba(255,255,255,0.55)';
+    c.fill();
+  }
+
+  function drawButton(c, r, label, opts) {
+    opts = opts || {};
+    var bg = opts.bg || '#ffffff';
+    var fg = opts.fg || '#2c3e50';
+    var border = opts.border || 'rgba(0,0,0,0.12)';
+    rr(c, r.x, r.y, r.w, r.h, opts.radius || 14);
+    c.fillStyle = bg;
+    c.fill();
+    c.lineWidth = 2;
+    c.strokeStyle = border;
+    c.stroke();
+    c.fillStyle = fg;
+    c.font = 'bold ' + (opts.fontSize || 20) + 'px Arial';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(label, r.x + r.w / 2 + (opts.textDx || 0), r.y + r.h / 2 + 1 + (opts.textDy || 0));
+  }
+
+  function drawBoardBase() {
+    // Ground + stripes in the active map theme's colors.
+    var th = theme();
+    ctx.fillStyle = th.ground;
+    ctx.fillRect(BOARD.x, BOARD.y, BOARD.w, BOARD.h);
+    ctx.fillStyle = th.stripe;
+    for (var s = 0; s < 8; s++) {
+      if (s % 2 === 0) ctx.fillRect(BOARD.x + s * 56, BOARD.y, 56, BOARD.h);
+    }
+    // Ground speckles (seeded, stable per level).
+    ctx.fillStyle = th.speck;
+    for (var g = 0; g < 40; g++) {
+      var gx = BOARD.x + 10 + hash(levelIndex * 31 + g * 3) * (BOARD.w - 20);
+      var gy = BOARD.y + 10 + hash(levelIndex * 17 + g * 7) * (BOARD.h - 20);
+      ctx.fillRect(gx, gy, 3, 3);
+    }
+    // Roads: sidewalk edge, then asphalt, then dashed center line.
+    var i, x, y;
+    for (i = 0; i < ROAD_V.length; i++) {
+      x = ROAD_V[i];
+      ctx.fillStyle = th.sidewalk;
+      ctx.fillRect(x - ROAD_W / 2 - 4, BOARD.y, ROAD_W + 8, BOARD.h);
+      ctx.fillStyle = th.road;
+      ctx.fillRect(x - ROAD_W / 2, BOARD.y, ROAD_W, BOARD.h);
+    }
+    for (i = 0; i < ROAD_H.length; i++) {
+      y = ROAD_H[i];
+      ctx.fillStyle = th.sidewalk;
+      ctx.fillRect(BOARD.x, y - ROAD_W / 2 - 4, BOARD.w, ROAD_W + 8);
+      ctx.fillStyle = th.road;
+      ctx.fillRect(BOARD.x, y - ROAD_W / 2, BOARD.w, ROAD_W);
+    }
+    // Dashed center lines.
+    ctx.strokeStyle = th.line;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([16, 14]);
+    for (i = 0; i < ROAD_V.length; i++) {
+      x = ROAD_V[i];
+      ctx.beginPath();
+      ctx.moveTo(x, BOARD.y + 6);
+      ctx.lineTo(x, BOARD.y + BOARD.h - 6);
+      ctx.stroke();
+    }
+    for (i = 0; i < ROAD_H.length; i++) {
+      y = ROAD_H[i];
+      ctx.beginPath();
+      ctx.moveTo(BOARD.x + 6, y);
+      ctx.lineTo(BOARD.x + BOARD.w - 6, y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // Zebra crossing at the center intersection.
+    ctx.fillStyle = th.zebra;
+    var cx = 240, cy = 400;
+    for (var z = 0; z < 5; z++) {
+      ctx.fillRect(cx - 26 + z * 11, cy - 44, 6, 18); // north approach
+      ctx.fillRect(cx - 26 + z * 11, cy + 26, 6, 18); // south approach
+      ctx.fillRect(cx - 44, cy - 26 + z * 11, 18, 6); // west approach
+      ctx.fillRect(cx + 26, cy - 26 + z * 11, 18, 6); // east approach
+    }
+    // Board border.
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = th.border;
+    ctx.strokeRect(BOARD.x - 2, BOARD.y - 2, BOARD.w + 4, BOARD.h + 4);
+  }
+
+  function drawObstacles() {
+    var houseWalls = ['#f5d0a9', '#f2b8a0', '#c9e4b4', '#b8d4f2', '#f2e3b8'];
+    var houseRoofs = ['#c0392b', '#8e44ad', '#2980b9', '#27ae60', '#d35400'];
+    var houseKind = theme().house;
+    for (var i = 0; i < levelDef.obs.length; i++) {
+      var o = levelDef.obs[i];
+      if (o.k === 'house') {
+        var hi = Math.floor(hash(levelIndex * 13 + i * 7) * houseWalls.length);
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(o.x + 3, o.y + 4, o.w, o.h);
+        if (houseKind === 'building') {
+          // City: tall block with a window grid.
+          ctx.fillStyle = ['#7d8aa0', '#6b7a8d', '#8d9aa8', '#5f6e80'][hi % 4];
+          ctx.fillRect(o.x, o.y, o.w, o.h);
+          ctx.fillStyle = '#cfe3f5';
+          for (var wy = 0; wy < 3; wy++) {
+            for (var wx = 0; wx < 4; wx++) {
+              ctx.fillRect(o.x + 6 + wx * 12, o.y + 6 + wy * 12, 7, 7);
+            }
+          }
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          ctx.fillRect(o.x, o.y, o.w, 4);
+        } else if (houseKind === 'hut') {
+          // Coastal: beach hut with a thatched roof.
+          ctx.fillStyle = '#fdf3d8';
+          ctx.fillRect(o.x, o.y, o.w, o.h);
+          ctx.fillStyle = '#c68b4e';
+          ctx.beginPath();
+          ctx.moveTo(o.x - 2, o.y + o.h * 0.55);
+          ctx.lineTo(o.x + o.w / 2, o.y + 2);
+          ctx.lineTo(o.x + o.w + 2, o.y + o.h * 0.55);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#8d5a2b';
+          ctx.fillRect(o.x + o.w / 2 - 5, o.y + o.h - 16, 10, 16);
+        } else if (houseKind === 'snowhouse') {
+          // Snow: house with a snow-capped roof.
+          ctx.fillStyle = houseWalls[hi];
+          ctx.fillRect(o.x, o.y, o.w, o.h);
+          ctx.fillStyle = houseRoofs[hi];
+          ctx.fillRect(o.x + 5, o.y + 5, o.w - 10, o.h - 10);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(o.x + 3, o.y + 2, o.w - 6, 10);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(o.x + 8, o.y + o.h - 16, 10, 10);
+          ctx.fillRect(o.x + o.w - 18, o.y + 8, 10, 10);
+        } else {
+          ctx.fillStyle = houseWalls[hi];
+          ctx.fillRect(o.x, o.y, o.w, o.h);
+          ctx.fillStyle = houseRoofs[hi];
+          ctx.fillRect(o.x + 5, o.y + 5, o.w - 10, o.h - 10);
+          ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(o.x + o.w / 2, o.y + 5);
+          ctx.lineTo(o.x + o.w / 2, o.y + o.h - 5);
+          ctx.stroke();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(o.x + 8, o.y + o.h - 16, 10, 10);
+          ctx.fillRect(o.x + o.w - 18, o.y + 8, 10, 10);
+        }
+      } else if (o.k === 'works') {
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(o.x + 3, o.y + 4, o.w, o.h);
+        ctx.fillStyle = '#ff9800';
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(o.x, o.y, o.w, o.h);
+        ctx.clip();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 9;
+        for (var s = -o.h; s < o.w + o.h; s += 24) {
+          ctx.beginPath();
+          ctx.moveTo(o.x + s, o.y + o.h);
+          ctx.lineTo(o.x + s + o.h, o.y);
+          ctx.stroke();
+        }
+        ctx.restore();
+        ctx.strokeStyle = '#e65100';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(o.x + 1, o.y + 1, o.w - 2, o.h - 2);
+        // Warning triangle in the middle.
+        var mx = o.x + o.w / 2, my = o.y + o.h / 2;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(mx, my - 12);
+        ctx.lineTo(mx + 13, my + 9);
+        ctx.lineTo(mx - 13, my + 9);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#e65100';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('!', mx, my + 3);
+      } else { // 'block' — roundabout island / concrete block
+        ctx.fillStyle = 'rgba(0,0,0,0.18)';
+        ctx.fillRect(o.x + 3, o.y + 4, o.w, o.h);
+        ctx.fillStyle = '#8d8d99';
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.fillStyle = '#a5a5b0';
+        ctx.fillRect(o.x + 6, o.y + 6, o.w - 12, o.h - 12);
+        ctx.strokeStyle = '#f7d54d';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 6]);
+        ctx.strokeRect(o.x + 3, o.y + 3, o.w - 6, o.h - 6);
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  function drawDestinations() {
+    for (var i = 0; i < cars.length; i++) {
+      var car = cars[i];
+      var pulse = 1 + Math.sin(time * 3 + i * 2) * 0.05;
+      var padSize = car.pad || DEST_SIZE; // bigger vehicles get bigger pads
+      var half = padSize / 2;
+      // Pad.
+      rr(ctx, car.dx - half, car.dy - half, padSize, padSize, 10);
+      ctx.fillStyle = car.color;
+      ctx.globalAlpha = 0.30;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = car.color;
+      ctx.stroke();
+      ctx.setLineDash([6, 5]);
+      rr(ctx, car.dx - half + 7, car.dy - half + 7, padSize - 14, padSize - 14, 7);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Flag in the middle.
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(car.dx - 6, car.dy + 10);
+      ctx.lineTo(car.dx - 6, car.dy - 10);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(car.dx - 6, car.dy - 10);
+      ctx.lineTo(car.dx + 10, car.dy - 5);
+      ctx.lineTo(car.dx - 6, car.dy);
+      ctx.closePath();
+      ctx.fill();
+      // Pulsing ring while this car still needs a path (or is being drawn).
+      if (phase === 'draw' && (!car.path || (drawing && drawing.car === car))) {
+        ctx.beginPath();
+        ctx.arc(car.dx, car.dy, (half + 8) * pulse, 0, Math.PI * 2);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = car.color;
+        ctx.globalAlpha = 0.7;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  function drawPathLine(pts, color, width, alpha, dashed) {
+    if (!pts || pts.length < 2) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    if (dashed) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([10, 9]);
+      ctx.lineDashOffset = -time * 34;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (var j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
+  function drawPathArrows(car) {
+    if (!car.path || car.path.length < 2) return;
+    var step = 90;
+    for (var d = step; d < car.totalLen - 20; d += step) {
+      var pos = pointAtPath(car, d);
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      ctx.rotate(pos.heading);
+      ctx.fillStyle = car.color;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(9, 0);
+      ctx.lineTo(-5, -6);
+      ctx.lineTo(-5, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawPaths() {
+    var dim = (phase === 'run' || phase === 'crashed' || phase === 'complete') ? 0.45 : 0.85;
+    for (var i = 0; i < cars.length; i++) {
+      var car = cars[i];
+      if (car.path) {
+        // While redrawing this car, dim the old path (it is being replaced).
+        var a = (drawing && drawing.car === car) ? 0.3 : dim;
+        drawPathLine(car.path, car.color, 9, a, true);
+        drawPathArrows(car);
+      }
+    }
+    if (drawing && drawing.pts.length > 1) {
+      drawPathLine(drawing.pts, drawing.car.color, 11, 0.95, true);
+    }
+    // Hint guide: a dashed route for one car (under the drawn paths).
+    if (hintPath && phase === 'draw' && !hintPath.car.path) {
+      drawPathLine(hintPath.pts, hintPath.car.color, 8, 0.55, true);
+    }
+  }
+
+  function drawCarShape(x, y, heading, type, color, tilt) {
+    var spec = CAR_TYPES[type] || CAR_TYPES.small;
+    var len = spec.len, wid = spec.wid;
+    ctx.save();
+    ctx.translate(x, y);
+    // Soft shadow.
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(2, 3, len / 2, wid / 2, heading, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.rotate(heading + (tilt || 0));
+    // Wheels (long vehicles get a middle axle).
+    ctx.fillStyle = '#222222';
+    var ww = 10, wh = 5;
+    ctx.fillRect(-len / 2 + 4, -wid / 2 - 2, ww, wh);
+    ctx.fillRect(-len / 2 + 4, wid / 2 - 3, ww, wh);
+    ctx.fillRect(len / 2 - 14, -wid / 2 - 2, ww, wh);
+    ctx.fillRect(len / 2 - 14, wid / 2 - 3, ww, wh);
+    if (type === 'truck' || type === 'bus') {
+      ctx.fillRect(-5, -wid / 2 - 2, ww, wh);
+      ctx.fillRect(-5, wid / 2 - 3, ww, wh);
+    }
+    // Body.
+    rr(ctx, -len / 2, -wid / 2, len, wid, 8);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.stroke();
+    if (type === 'truck') {
+      // Cargo box (rear) + cab (front) with windshield.
+      ctx.fillStyle = 'rgba(0,0,0,0.20)';
+      rr(ctx, -len / 2 + 3, -wid / 2 + 3, len * 0.58, wid - 6, 4);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.30)';
+      rr(ctx, len * 0.12, -wid / 2 + 3, len * 0.30, wid - 6, 4);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(190,227,242,0.95)';
+      rr(ctx, len * 0.30, -wid * 0.32, len * 0.10, wid * 0.64, 2);
+      ctx.fill();
+    } else if (type === 'bus') {
+      // Long window band along the body.
+      ctx.fillStyle = 'rgba(190,227,242,0.95)';
+      for (var wnd = 0; wnd < 4; wnd++) {
+        rr(ctx, -len / 2 + 8 + wnd * ((len - 18) / 4), -wid * 0.32, (len - 18) / 4 - 6, wid * 0.64, 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.fillRect(-len / 2 + 4, -wid / 2 + 2, len - 8, 3);
+    } else {
+      // Windshield + rear window.
+      ctx.fillStyle = 'rgba(190,227,242,0.95)';
+      rr(ctx, len * 0.14, -wid * 0.34, len * 0.16, wid * 0.68, 3);
+      ctx.fill();
+      rr(ctx, -len * 0.32, -wid * 0.34, len * 0.14, wid * 0.68, 3);
+      ctx.fill();
+      // Roof.
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      rr(ctx, -len * 0.14, -wid * 0.30, len * 0.26, wid * 0.60, 4);
+      ctx.fill();
+    }
+    // Headlights.
+    ctx.fillStyle = '#fff8c0';
+    ctx.beginPath();
+    ctx.arc(len / 2 - 3, -wid * 0.28, 3, 0, Math.PI * 2);
+    ctx.arc(len / 2 - 3, wid * 0.28, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Type details.
+    if (type === 'taxi') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-6, -5, 12, 10);
+      ctx.fillStyle = '#222222';
+      ctx.font = 'bold 6px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('TAXI', 0, 0);
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      for (var s = 0; s < 4; s++) {
+        if (s % 2 === 0) ctx.fillRect(-len / 2 + 8 + s * 7, -wid / 2 + 2, 7, 4);
+      }
+    } else if (type === 'sport') {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(-len / 2 - 3, -wid / 2 - 2, 5, wid + 4);
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillRect(-len / 2 + 2, -2, len - 6, 4);
+    }
+    ctx.restore();
+  }
+
+  function drawCars() {
+    for (var i = 0; i < cars.length; i++) {
+      var car = cars[i];
+      // Colored ring under the car in the draw phase (links car to its dest).
+      if (phase === 'draw' && !car.arrived) {
+        ctx.beginPath();
+        ctx.arc(car.x, car.y, 27, 0, Math.PI * 2);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = car.color;
+        ctx.globalAlpha = 0.55;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      drawCarShape(car.x, car.y, car.heading, car.type, car.color, car.tilt);
+    }
+  }
+
+  function drawTrees() {
+    var kind = theme().tree;
+    for (var i = 0; i < trees.length; i++) {
+      var tr = trees[i];
+      if (kind === 'palm') {
+        // Coastal palm: curved trunk + drooping fronds.
+        ctx.strokeStyle = '#8d6e63';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tr.x, tr.y + tr.r);
+        ctx.quadraticCurveTo(tr.x + 2, tr.y, tr.x + 5, tr.y - tr.r * 0.6);
+        ctx.stroke();
+        ctx.strokeStyle = '#2e7d32';
+        ctx.lineWidth = 3;
+        for (var f = 0; f < 6; f++) {
+          var a = -Math.PI / 2 + (f - 2.5) * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(tr.x + 5, tr.y - tr.r * 0.6);
+          ctx.quadraticCurveTo(
+            tr.x + 5 + Math.cos(a) * tr.r * 0.8, tr.y - tr.r * 0.6 + Math.sin(a) * tr.r * 0.8,
+            tr.x + 5 + Math.cos(a) * tr.r * 1.3, tr.y - tr.r * 0.6 + Math.sin(a) * tr.r * 1.3 + 5);
+          ctx.stroke();
+        }
+      } else if (kind === 'pine') {
+        // Snow pine: stacked triangles with a snow cap.
+        ctx.fillStyle = '#5d4037';
+        ctx.fillRect(tr.x - 2, tr.y + tr.r * 0.6, 4, 6);
+        ctx.fillStyle = '#1b5e20';
+        for (var p = 0; p < 3; p++) {
+          var pw = tr.r * (1.1 - p * 0.28), py = tr.y + tr.r * 0.7 - p * tr.r * 0.55;
+          ctx.beginPath();
+          ctx.moveTo(tr.x, py - tr.r * 0.8);
+          ctx.lineTo(tr.x + pw, py);
+          ctx.lineTo(tr.x - pw, py);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(tr.x, tr.y - tr.r * 1.1);
+        ctx.lineTo(tr.x + tr.r * 0.3, tr.y - tr.r * 0.7);
+        ctx.lineTo(tr.x - tr.r * 0.3, tr.y - tr.r * 0.7);
+        ctx.closePath();
+        ctx.fill();
+      } else if (kind === 'lamp') {
+        // City street lamp: pole + glowing head.
+        ctx.strokeStyle = '#546e7a';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tr.x, tr.y + tr.r);
+        ctx.lineTo(tr.x, tr.y - tr.r);
+        ctx.stroke();
+        ctx.fillStyle = '#37474f';
+        ctx.beginPath();
+        ctx.arc(tr.x, tr.y - tr.r - 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,235,130,0.85)';
+        ctx.beginPath();
+        ctx.arc(tr.x, tr.y - tr.r - 2, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff59d';
+        ctx.beginPath();
+        ctx.arc(tr.x, tr.y - tr.r - 2, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = '#5d4037';
+        ctx.beginPath();
+        ctx.arc(tr.x, tr.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#2e7d32';
+        ctx.beginPath();
+        ctx.arc(tr.x - 3, tr.y - 2, tr.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#43a047';
+        ctx.beginPath();
+        ctx.arc(tr.x + 3, tr.y + 2, tr.r * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.beginPath();
+        ctx.arc(tr.x - 2, tr.y - 4, tr.r * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawParticles() {
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var f = 1 - p.life / p.maxLife;
+      ctx.save();
+      ctx.globalAlpha = clamp(f, 0, 1);
+      if (p.kind === 'confetti') {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot || 0);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.7);
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (p.kind === 'smoke' ? (1.6 - f * 0.6) : f), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawPopups() {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (var i = 0; i < popups.length; i++) {
+      var p = popups[i];
+      ctx.save();
+      ctx.globalAlpha = clamp(p.t, 0, 1);
+      ctx.font = 'bold 18px Arial';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.strokeText(p.text, p.x, p.y);
+      ctx.fillStyle = p.color;
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.restore();
+    }
+  }
+
+  function missionLine() {
+    for (var i = 0; i < MISSION_DEFS.length; i++) {
+      var def = MISSION_DEFS[i];
+      var prog = missionProgress(def);
+      if (prog < def.target) return { def: def, progress: prog };
+    }
+    return null;
+  }
+
+  function drawTopBar() {
+    // Level pill.
+    rr(ctx, 12, 10, 110, 40, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 17px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t('level') + ' ' + packLabel(levelPack, levelIndex), 67, 31);
+    // Coins pill.
+    rr(ctx, 130, 10, 150, 40, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    drawCoinIcon(ctx, 152, 30, 11);
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(coins), 170, 31);
+    // Mute button.
+    rr(ctx, BTN.mute.x, BTN.mute.y, BTN.mute.w, BTN.mute.h, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    drawSpeakerIcon(ctx, BTN.mute.x + 22, BTN.mute.y + 20, AudioSys.userMuted);
+    // Pause button.
+    rr(ctx, BTN.pause.x, BTN.pause.y, BTN.pause.w, BTN.pause.h, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(BTN.pause.x + 14, BTN.pause.y + 11, 6, 18);
+    ctx.fillRect(BTN.pause.x + 24, BTN.pause.y + 11, 6, 18);
+    // Mission line (narrowed to make room for the hint button).
+    var m = missionLine();
+    rr(ctx, 12, 58, 400, 36, 10);
+    ctx.fillStyle = 'rgba(38,110,32,0.85)';
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 15px Arial';
+    ctx.textAlign = 'left';
+    if (m) {
+      ctx.fillText('► ' + t(m.def.name) + '  ' + m.progress + '/' + m.def.target, 24, 77);
+    } else {
+      ctx.fillText('★ ' + t('allMissionsDone'), 24, 77);
+    }
+    // Hint button (lightbulb + owned count; dimmed in the run phase).
+    var hintActive = phase === 'draw';
+    rr(ctx, BTN.hint.x, BTN.hint.y, BTN.hint.w, BTN.hint.h, 10);
+    ctx.fillStyle = hintActive ? '#fff8e1' : '#e0e0e0';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = hints > 0 ? '#f5b301' : '#bdbdbd';
+    ctx.stroke();
+    drawBulbIcon(ctx, BTN.hint.x + 24, BTN.hint.y + 18, hints > 0);
+    if (hints > 0) {
+      ctx.beginPath();
+      ctx.arc(BTN.hint.x + 42, BTN.hint.y + 6, 9, 0, Math.PI * 2);
+      ctx.fillStyle = '#f5b301';
+      ctx.fill();
+      ctx.fillStyle = '#3a2a00';
+      ctx.font = 'bold 11px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(Math.min(99, hints)), BTN.hint.x + 42, BTN.hint.y + 7);
+    }
+  }
+
+  function drawBulbIcon(c, x, y, lit) {
+    c.beginPath();
+    c.arc(x, y - 3, 8, 0, Math.PI * 2);
+    c.fillStyle = lit ? '#ffca28' : '#bdbdbd';
+    c.fill();
+    c.fillStyle = '#8d6e63';
+    c.fillRect(x - 3, y + 5, 6, 4);
+    if (lit) {
+      c.strokeStyle = '#ffca28';
+      c.lineWidth = 2;
+      for (var i = 0; i < 5; i++) {
+        var a = -Math.PI * 0.8 + i * Math.PI * 0.4;
+        c.beginPath();
+        c.moveTo(x + Math.cos(a) * 11, y - 3 + Math.sin(a) * 11);
+        c.lineTo(x + Math.cos(a) * 14, y - 3 + Math.sin(a) * 14);
+        c.stroke();
+      }
+    }
+  }
+
+  function drawSpeakerIcon(c, x, y, muted) {
+    c.fillStyle = '#2c3e50';
+    c.beginPath();
+    c.moveTo(x - 10, y - 4);
+    c.lineTo(x - 4, y - 4);
+    c.lineTo(x + 2, y - 10);
+    c.lineTo(x + 2, y + 10);
+    c.lineTo(x - 4, y + 4);
+    c.lineTo(x - 10, y + 4);
+    c.closePath();
+    c.fill();
+    if (muted) {
+      c.strokeStyle = '#e74c3c';
+      c.lineWidth = 3;
+      c.beginPath();
+      c.moveTo(x + 5, y - 7);
+      c.lineTo(x + 13, y + 7);
+      c.moveTo(x + 13, y - 7);
+      c.lineTo(x + 5, y + 7);
+      c.stroke();
+    } else {
+      c.strokeStyle = '#2c3e50';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(x + 4, y, 7, -1, 1);
+      c.stroke();
+    }
+  }
+
+  function drawBottomBar() {
+    // RESET button.
+    rr(ctx, BTN.reset.x, BTN.reset.y, BTN.reset.w, BTN.reset.h, 14);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.stroke();
+    ctx.strokeStyle = '#2c3e50';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(BTN.reset.x + 50, BTN.reset.y + 22, 10, 0.6, Math.PI * 1.7);
+    ctx.stroke();
+    ctx.fillStyle = '#2c3e50';
+    ctx.beginPath();
+    ctx.moveTo(BTN.reset.x + 58, BTN.reset.y + 9);
+    ctx.lineTo(BTN.reset.x + 64, BTN.reset.y + 18);
+    ctx.lineTo(BTN.reset.x + 54, BTN.reset.y + 19);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 15px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t('reset'), BTN.reset.x + 50, BTN.reset.y + 48);
+    // GO button.
+    var ready = allPathsReady();
+    var goActive = phase === 'draw' && ready;
+    rr(ctx, BTN.go.x, BTN.go.y, BTN.go.w, BTN.go.h, 18);
+    ctx.fillStyle = goActive ? '#27ae60' : (phase === 'run' ? '#f39c12' : '#95a5a6');
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 30px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    var goLabel = phase === 'run' ? '···' : t('go');
+    ctx.fillText(goLabel, BTN.go.x + BTN.go.w / 2 - 6, BTN.go.y + BTN.go.h / 2 + 1);
+    if (goActive) {
+      ctx.beginPath();
+      ctx.moveTo(BTN.go.x + BTN.go.w - 52, BTN.go.y + BTN.go.h / 2 - 10);
+      ctx.lineTo(BTN.go.x + BTN.go.w - 52, BTN.go.y + BTN.go.h / 2 + 10);
+      ctx.lineTo(BTN.go.x + BTN.go.w - 34, BTN.go.y + BTN.go.h / 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // LEVELS button.
+    rr(ctx, BTN.levels.x, BTN.levels.y, BTN.levels.w, BTN.levels.h, 14);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.stroke();
+    ctx.fillStyle = '#2c3e50';
+    for (var gx = 0; gx < 3; gx++) {
+      for (var gy = 0; gy < 3; gy++) {
+        ctx.fillRect(BTN.levels.x + 41 + gx * 9, BTN.levels.y + 12 + gy * 9, 6, 6);
+      }
+    }
+    ctx.font = 'bold 15px Arial';
+    ctx.fillText(t('levels'), BTN.levels.x + 50, BTN.levels.y + 48);
+  }
+
+  function drawToast(y) {
+    if (!toast) return;
+    // Default y=122 (below the top bar in-game); the shop passes 758 so the
+    // toast sits at the bottom instead of covering the category tabs.
+    var ty = (y === undefined ? 122 : y);
+    ctx.save();
+    ctx.globalAlpha = clamp(toast.t / 0.5, 0, 1);
+    ctx.font = 'bold 16px Arial';
+    var w = ctx.measureText(toast.text).width + 36;
+    rr(ctx, 240 - w / 2, ty, w, 36, 18);
+    ctx.fillStyle = 'rgba(30,30,30,0.85)';
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(toast.text, 240, ty + 19);
+    ctx.restore();
+  }
+
+  function drawMissionToast() {
+    if (!missionToast) return;
+    ctx.save();
+    ctx.globalAlpha = clamp(missionToast.t / 0.5, 0, 1);
+    ctx.font = 'bold 16px Arial';
+    var w = ctx.measureText(missionToast.text).width + 44;
+    rr(ctx, 240 - w / 2, 168, w, 38, 19);
+    ctx.fillStyle = '#f5b301';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#d89a00';
+    ctx.stroke();
+    ctx.fillStyle = '#3a2a00';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('★ ' + missionToast.text, 240, 188);
+    ctx.restore();
+  }
+
+  function wrapText(c, text, maxW) {
+    var words = text.split(' '), lines = [], line = '';
+    for (var i = 0; i < words.length; i++) {
+      var test = line ? line + ' ' + words[i] : words[i];
+      if (c.measureText(test).width > maxW && line) { lines.push(line); line = words[i]; }
+      else line = test;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  // ============================== Screens ==============================
+  function renderMenu() {
+    ctx.fillStyle = theme().bg;
+    ctx.fillRect(0, 0, W, H);
+    drawBoardBase();
+    drawObstacles();
+    drawTrees();
+    // Decorative cars looping on the road grid (in the selected paint theme).
+    var menuPalette = paletteById(selectedColor).colors;
+    for (var i = 0; i < menuCars.length; i++) {
+      var mc = menuCars[i];
+      if (mc.x !== undefined) drawCarShape(mc.x, mc.y, mc.heading, mc.type, menuPalette[i % menuPalette.length], 0);
+    }
+    // Title (inside the board's top strip, clear of the coins/mute pills).
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 40px Arial';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#2c5a1e';
+    ctx.strokeText('TRAFFIC ROUTE', 240, 142);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('TRAFFIC ROUTE', 240, 142);
+    ctx.font = 'bold 15px Arial';
+    ctx.fillStyle = '#eaffdd';
+    ctx.fillText(t('subtitle'), 240, 174);
+    // Coins pill (top-left) + mute (top-right).
+    rr(ctx, 12, 10, 130, 40, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    drawCoinIcon(ctx, 32, 30, 11);
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(coins), 50, 31);
+    rr(ctx, BTN.menuMute.x, BTN.menuMute.y, BTN.menuMute.w, BTN.menuMute.h, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    drawSpeakerIcon(ctx, BTN.menuMute.x + 22, BTN.menuMute.y + 20, AudioSys.userMuted);
+    // PLAY button (two-line: PLAY / LEVEL n).
+    rr(ctx, BTN.play.x, BTN.play.y, BTN.play.w, BTN.play.h, 18);
+    ctx.fillStyle = '#27ae60';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#1e8449';
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 30px Arial';
+    ctx.fillText('▶ ' + t('play'), 240, BTN.play.y + 30);
+    ctx.font = 'bold 15px Arial';
+    ctx.fillStyle = '#d5f5e3';
+    ctx.fillText(t('level') + ' ' + unlocked, 240, BTN.play.y + 56);
+    // LEVELS + SHOP buttons (side by side).
+    drawButton(ctx, BTN.menuLevels, t('levels'), { bg: '#ffffff', fg: '#2c3e50', fontSize: 20 });
+    drawButton(ctx, BTN.menuShop, t('shop'), { bg: '#fff3cd', fg: '#7a5c00', fontSize: 20 });
+    // Missions card.
+    rr(ctx, 24, 584, 432, 100, 14);
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.fill();
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 15px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(t('missions'), 36, 602);
+    for (var m = 0; m < MISSION_DEFS.length; m++) {
+      var def = MISSION_DEFS[m];
+      var prog = missionProgress(def);
+      var doneM = prog >= def.target;
+      var my = 624 + m * 22;
+      ctx.font = 'bold 13px Arial';
+      ctx.fillStyle = doneM ? '#27ae60' : '#2c3e50';
+      ctx.fillText((doneM ? '✓ ' : '• ') + t(def.name), 36, my);
+      // Progress bar.
+      ctx.fillStyle = '#e0e0e0';
+      ctx.fillRect(252, my - 5, 110, 10);
+      ctx.fillStyle = doneM ? '#27ae60' : '#f5b301';
+      ctx.fillRect(252, my - 5, 110 * Math.min(1, prog / def.target), 10);
+      ctx.fillStyle = '#2c3e50';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText(prog + '/' + def.target, 446, my);
+      ctx.textAlign = 'left';
+    }
+    // How-to (below the board).
+    ctx.font = '15px Arial';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    var lines = wrapText(ctx, t('howTo'), 440);
+    for (var l = 0; l < lines.length; l++) {
+      ctx.fillText(lines[l], 240, 724 + l * 20);
+    }
+    drawMissionToast();
+  }
+
+  function drawLevelCell(rx, ry, label, locked, s, isCurrent) {
+    rr(ctx, rx, ry, 72, 72, 12);
+    ctx.fillStyle = locked ? '#b0b0b0' : '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = isCurrent ? 4 : 2;
+    ctx.strokeStyle = isCurrent ? '#27ae60' : 'rgba(0,0,0,0.12)';
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (locked) {
+      // Padlock.
+      ctx.strokeStyle = '#7a7a7a';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(rx + 36, ry + 30, 11, Math.PI, 0);
+      ctx.stroke();
+      ctx.fillStyle = '#7a7a7a';
+      ctx.fillRect(rx + 22, ry + 30, 28, 22);
+    } else {
+      ctx.fillStyle = '#2c3e50';
+      ctx.font = 'bold 24px Arial';
+      ctx.fillText(label, rx + 36, ry + 28);
+      for (var st = 0; st < 3; st++) {
+        drawStar(ctx, rx + 20 + st * 16, ry + 56, 7, st < s ? '#ffc107' : '#dddddd');
+      }
+    }
+  }
+
+  function renderLevels() {
+    ctx.fillStyle = theme().bg;
+    ctx.fillRect(0, 0, W, H);
+    drawButton(ctx, BTN.back, '◀ ' + t('menu'), { bg: '#ffffff', fg: '#2c3e50', fontSize: 16 });
+    rr(ctx, 320, 10, 140, 44, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    drawCoinIcon(ctx, 342, 32, 11);
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(coins), 360, 33);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 24px Arial';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(t('selectLevel'), 240, 64);
+    // Tabs: main 30 levels | Truck pack | Bus pack (locked tabs show the price).
+    for (var ti = 0; ti < SELECT_TABS.length; ti++) {
+      var tab = SELECT_TABS[ti];
+      var active = selectTab === tab.id;
+      var lockedTab = tab.id !== 'main' && (packUnlocked[tab.id] || 0) === 0;
+      var label = tab.id === 'main' ? t('mapSuburb') : tab.id.toUpperCase();
+      if (lockedTab) label += ' · ' + (tab.id === 'truck' ? SHOP.packTruck.price : SHOP.packBus.price);
+      drawButton(ctx, tab.r, label, {
+        bg: active ? '#27ae60' : '#ffffff',
+        fg: active ? '#ffffff' : '#2c3e50',
+        fontSize: 15, radius: 10
+      });
+    }
+    var ox = 32, oy = 150, cw = 72, gap = 14;
+    var totalStars = 0, maxStars = 0;
+    if (selectTab === 'main') {
+      for (var i = 0; i < LEVELS.length; i++) {
+        var col = i % 5, row = Math.floor(i / 5);
+        var rx = ox + col * (cw + gap), ry = oy + row * (cw + gap);
+        var n = i + 1;
+        var s = stars[i] || 0;
+        totalStars += s;
+        drawLevelCell(rx, ry, String(n), n > unlocked, s, n === unlocked);
+      }
+      maxStars = LEVELS.length * 3;
+    } else {
+      // Pack tab: 5 cells in one row, then the pack info card + action button.
+      var pack = selectTab;
+      var owned = (packUnlocked[pack] || 0) > 0;
+      for (var p = 0; p < 5; p++) {
+        var px = ox + p * (cw + gap);
+        var ps = stars[globalLevelIndex(pack, p)] || 0;
+        totalStars += ps;
+        drawLevelCell(px, oy, packLabel(pack, p), p + 1 > (packUnlocked[pack] || 0), ps,
+                      owned && p + 1 === (packUnlocked[pack] || 0));
+      }
+      maxStars = 15;
+      rr(ctx, 24, 260, 432, 200, 14);
+      ctx.fillStyle = 'rgba(255,255,255,0.94)';
+      ctx.fill();
+      drawCarShape(110, 330, 0, pack, '#e74c3c', 0);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#2c3e50';
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText(t(pack === 'truck' ? 'truckPack' : 'busPack'), 190, 296);
+      ctx.font = '15px Arial';
+      ctx.fillStyle = '#5d6d7e';
+      var descLines = wrapText(ctx, t(pack === 'truck' ? 'truckDesc' : 'busDesc'), 250);
+      for (var dl = 0; dl < descLines.length; dl++) {
+        ctx.fillText(descLines[dl], 190, 326 + dl * 20);
+      }
+      ctx.font = 'bold 16px Arial';
+      if (owned) {
+        ctx.fillStyle = '#27ae60';
+        ctx.fillText(t('owned'), 190, 420);
+      } else {
+        drawCoinIcon(ctx, 200, 420, 11);
+        ctx.fillStyle = '#b8860b';
+        ctx.fillText(String(pack === 'truck' ? SHOP.packTruck.price : SHOP.packBus.price), 218, 421);
+      }
+      var act = packActionRect();
+      if (owned) {
+        drawButton(ctx, act, '▶ ' + t('play'), { bg: '#27ae60', fg: '#ffffff', fontSize: 20 });
+      } else {
+        drawButton(ctx, act, t('buy') + ' — ' + (pack === 'truck' ? SHOP.packTruck.price : SHOP.packBus.price),
+                   { bg: '#f5b301', fg: '#3a2a00', fontSize: 20 });
+      }
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('★ ' + totalStars + ' / ' + maxStars, 240, 692);
+    ctx.font = '14px Arial';
+    ctx.fillStyle = '#eaffdd';
+    ctx.fillText(t('star3Tip'), 240, 722);
+  }
+
+  // Shop price/state button: 'buy' shows a coin + price, 'owned' /
+  // 'selected' / 'select' show the state label.
+  function drawShopButton(r, kind, price) {
+    // Save/restore: this button centers text, and must not leak textAlign
+    // into the shop rows drawn after it (they are left-aligned).
+    ctx.save();
+    var bg, fg, label;
+    if (kind === 'buy') { bg = '#f5b301'; fg = '#3a2a00'; label = String(price); }
+    else if (kind === 'owned') { bg = '#bdbdbd'; fg = '#424242'; label = t('owned'); }
+    else if (kind === 'selected') { bg = '#27ae60'; fg = '#ffffff'; label = t('selected'); }
+    else { bg = '#ffffff'; fg = '#2c3e50'; label = t('select'); }
+    rr(ctx, r.x, r.y, r.w, r.h, 12);
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (kind === 'buy') {
+      drawCoinIcon(ctx, r.x + 22, r.y + r.h / 2, 10);
+      ctx.fillStyle = fg;
+      ctx.font = 'bold 18px Arial';
+      ctx.fillText(label, r.x + r.w / 2 + 10, r.y + r.h / 2 + 1);
+    } else {
+      ctx.fillStyle = fg;
+      ctx.font = 'bold 14px Arial';
+      ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    }
+    ctx.restore();
+  }
+
+  function drawMapPreview(x, y, w, h, mapId) {
+    var th = THEMES[mapId];
+    rr(ctx, x, y, w, h, 10);
+    ctx.fillStyle = th.ground;
+    ctx.fill();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.fillStyle = th.road;
+    ctx.fillRect(x + w / 2 - 10, y, 20, h);
+    ctx.fillRect(x, y + h / 2 - 10, w, 20);
+    ctx.fillStyle = th.line;
+    ctx.fillRect(x + w / 2 - 1, y + 6, 2, h - 12);
+    if (th.tree === 'palm') {
+      ctx.fillStyle = '#2e7d32';
+      ctx.beginPath(); ctx.arc(x + 18, y + 18, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + w - 18, y + h - 18, 8, 0, Math.PI * 2); ctx.fill();
+    } else if (th.tree === 'pine') {
+      ctx.fillStyle = '#1b5e20';
+      ctx.beginPath();
+      ctx.moveTo(x + 18, y + 8); ctx.lineTo(x + 26, y + 26); ctx.lineTo(x + 10, y + 26);
+      ctx.closePath(); ctx.fill();
+    } else if (th.tree === 'lamp') {
+      ctx.fillStyle = '#546e7a';
+      ctx.fillRect(x + 16, y + 10, 3, 18);
+      ctx.fillStyle = '#fff59d';
+      ctx.beginPath(); ctx.arc(x + 17, y + 9, 4, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillStyle = '#2e7d32';
+      ctx.beginPath(); ctx.arc(x + 18, y + 18, 8, 0, Math.PI * 2); ctx.fill();
+    }
+    if (th.house === 'building') {
+      ctx.fillStyle = '#5f6e80';
+      ctx.fillRect(x + w - 26, y + 8, 18, 18);
+    } else if (th.house === 'hut') {
+      ctx.fillStyle = '#c68b4e';
+      ctx.beginPath();
+      ctx.moveTo(x + w - 28, y + 26); ctx.lineTo(x + w - 19, y + 10); ctx.lineTo(x + w - 10, y + 26);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    rr(ctx, x, y, w, h, 10);
+    ctx.stroke();
+  }
+
+  function renderShop() {
+    ctx.fillStyle = theme().bg;
+    ctx.fillRect(0, 0, W, H);
+    drawButton(ctx, BTN.back, '◀ ' + t('menu'), { bg: '#ffffff', fg: '#2c3e50', fontSize: 16 });
+    rr(ctx, 320, 10, 140, 44, 10);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    drawCoinIcon(ctx, 342, 32, 11);
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(coins), 360, 33);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 30px Arial';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(t('shop'), 240, 96);
+    // Category tabs.
+    for (var ti = 0; ti < SHOP_TABS.length; ti++) {
+      var tab = SHOP_TABS[ti];
+      var active = shopTab === tab.id;
+      drawButton(ctx, tab.r, t(tab.id + 'Tab'), {
+        bg: active ? '#27ae60' : '#ffffff',
+        fg: active ? '#ffffff' : '#2c3e50',
+        fontSize: 14, radius: 10
+      });
+    }
+    ctx.textAlign = 'left';
+    if (shopTab === 'hints') {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px Arial';
+      ctx.fillText(t('hintsOwned') + ': ' + hints, 24, 200);
+      // Single hint card.
+      rr(ctx, 16, 220, 448, 120, 14);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      drawBulbIcon(ctx, 52, 280, true);
+      ctx.fillStyle = '#2c3e50';
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText(t('hintName'), 90, 262);
+      ctx.fillStyle = '#5d6d7e';
+      ctx.font = '14px Arial';
+      var hdLines = wrapText(ctx, t('hintDesc'), 230);
+      for (var hd = 0; hd < hdLines.length; hd++) {
+        ctx.fillText(hdLines[hd], 90, 292 + hd * 19);
+      }
+      drawShopButton({ x: 336, y: 258, w: 104, h: 44 }, 'buy', SHOP.hintSingle.price);
+      // 5-pack card.
+      rr(ctx, 16, 356, 448, 120, 14);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      drawBulbIcon(ctx, 44, 416, true);
+      drawBulbIcon(ctx, 62, 416, true);
+      ctx.fillStyle = '#2c3e50';
+      ctx.font = 'bold 20px Arial';
+      ctx.fillText(t('hintPackName'), 90, 398);
+      ctx.fillStyle = '#5d6d7e';
+      ctx.font = '14px Arial';
+      var hpLines = wrapText(ctx, t('hintPackDesc'), 230);
+      for (var hp = 0; hp < hpLines.length; hp++) {
+        ctx.fillText(hpLines[hp], 90, 428 + hp * 19);
+      }
+      drawShopButton({ x: 336, y: 394, w: 104, h: 44 }, 'buy', SHOP.hintPack.price);
+      // Info.
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '14px Arial';
+      var infoLines = wrapText(ctx, t('hintInfo'), 432);
+      for (var il = 0; il < infoLines.length; il++) {
+        ctx.fillText(infoLines[il], 24, 510 + il * 20);
+      }
+    } else if (shopTab === 'packs') {
+      var packCards = [
+        { id: 'truck', y: 180, nameKey: 'truckPack', descKey: 'truckDesc', price: SHOP.packTruck.price },
+        { id: 'bus', y: 376, nameKey: 'busPack', descKey: 'busDesc', price: SHOP.packBus.price }
+      ];
+      for (var pc = 0; pc < packCards.length; pc++) {
+        var card = packCards[pc];
+        var owned = (packUnlocked[card.id] || 0) > 0;
+        rr(ctx, 16, card.y, 448, 180, 14);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        drawCarShape(95, card.y + 70, 0, card.id, '#e74c3c', 0);
+        ctx.fillStyle = '#2c3e50';
+        ctx.font = 'bold 20px Arial';
+        ctx.fillText(t(card.nameKey), 180, card.y + 35);
+        ctx.fillStyle = '#5d6d7e';
+        ctx.font = '14px Arial';
+        var dLines = wrapText(ctx, t(card.descKey), 240);
+        for (var dl = 0; dl < dLines.length; dl++) {
+          ctx.fillText(dLines[dl], 180, card.y + 65 + dl * 19);
+        }
+        ctx.fillStyle = '#27ae60';
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText(t('newLevels'), 180, card.y + 118);
+        drawShopButton({ x: 180, y: card.y + 132, w: 150, h: 40 },
+                       owned ? 'owned' : 'buy', card.price);
+      }
+    } else if (shopTab === 'colors') {
+      for (var ci = 0; ci < PALETTES.length; ci++) {
+        var pal = PALETTES[ci];
+        var ry = 176 + ci * 90;
+        var isOwned = ownedColors.indexOf(pal.id) !== -1;
+        var isSel = selectedColor === pal.id;
+        rr(ctx, 16, ry, 448, 84, 12);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        for (var cc = 0; cc < 3; cc++) {
+          drawCarShape(46 + cc * 44, ry + 42, 0, 'small', pal.colors[cc], 0);
+        }
+        ctx.fillStyle = '#2c3e50';
+        ctx.font = 'bold 17px Arial';
+        ctx.fillText(t('pal' + pal.id.charAt(0).toUpperCase() + pal.id.slice(1)), 182, ry + 43);
+        drawShopButton({ x: 352, y: ry + 20, w: 96, h: 44 },
+                       isSel ? 'selected' : (isOwned ? 'select' : 'buy'), pal.price);
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '13px Arial';
+      var cLines = wrapText(ctx, t('colorInfo'), 432);
+      for (var cl = 0; cl < cLines.length; cl++) {
+        ctx.fillText(cLines[cl], 24, 730 + cl * 18);
+      }
+    } else if (shopTab === 'maps') {
+      for (var mi = 0; mi < MAP_ORDER.length; mi++) {
+        var mapId = MAP_ORDER[mi];
+        var my = 176 + mi * 132;
+        var mOwned = ownedMaps.indexOf(mapId) !== -1;
+        var mSel = selectedMap === mapId;
+        rr(ctx, 16, my, 448, 120, 12);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        drawMapPreview(28, my + 12, 84, 96, mapId);
+        var cap = mapId.charAt(0).toUpperCase() + mapId.slice(1);
+        ctx.fillStyle = '#2c3e50';
+        ctx.font = 'bold 18px Arial';
+        ctx.fillText(t('map' + cap), 128, my + 30);
+        ctx.fillStyle = '#5d6d7e';
+        ctx.font = '14px Arial';
+        var mLines = wrapText(ctx, t('map' + cap + 'Desc'), 210);
+        for (var ml = 0; ml < mLines.length; ml++) {
+          ctx.fillText(mLines[ml], 128, my + 58 + ml * 19);
+        }
+        drawShopButton({ x: 352, y: my + 38, w: 96, h: 44 },
+                       mSel ? 'selected' : (mOwned ? 'select' : 'buy'), THEMES[mapId].price);
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '13px Arial';
+      var mapLines = wrapText(ctx, t('mapInfo'), 432);
+      for (var mli = 0; mli < mapLines.length; mli++) {
+        ctx.fillText(mapLines[mli], 24, 716 + mli * 18);
+      }
+    }
+    drawToast(758);
+  }
+
+  function renderCompletePanel() {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, W, H);
+    rr(ctx, 40, 170, 400, 520, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#27ae60';
+    ctx.font = 'bold 28px Arial';
+    ctx.fillText(t('levelComplete'), 240, 222);
+    // Stars pop in sequence.
+    var panelT = completeT - 0.9;
+    var visible = panelT > 0 ? Math.min(lastStars, Math.floor(panelT / 0.3) + 1) : 0;
+    if (visible > starPop) {
+      starPop = visible;
+      if (visible <= lastStars) AudioSys.star();
+    }
+    for (var i = 0; i < 3; i++) {
+      var sx = 240 + (i - 1) * 78;
+      var sy = 300 - (i === 1 ? 14 : 0);
+      var earned = i < lastStars;
+      var shown = i < visible;
+      var scale = 1;
+      if (earned && shown) {
+        var popT = clamp((panelT - i * 0.3) / 0.3, 0, 1);
+        scale = Math.max(0.2, easeOutBack(popT));
+      }
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.scale(scale, scale);
+      drawStar(ctx, 0, 0, 30, (earned && shown) ? '#ffc107' : '#dddddd');
+      ctx.restore();
+    }
+    // Coins.
+    drawCoinIcon(ctx, 190, 382, 16);
+    ctx.fillStyle = '#b8860b';
+    ctx.font = 'bold 26px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('+' + lastCoins, 214, 383);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#7f8c8d';
+    ctx.font = '14px Arial';
+    ctx.fillText(t('star3Tip'), 240, 424);
+    drawButton(ctx, BTN.replay, t('replay'), { bg: '#ecf0f1', fg: '#2c3e50', fontSize: 18 });
+    drawButton(ctx, BTN.next, levelIndex + 1 < levelList(levelPack).length ? t('next') : t('levels'),
+               { bg: '#27ae60', fg: '#ffffff', fontSize: 20 });
+    drawButton(ctx, BTN.compLevels, t('levels'), { bg: '#ffffff', fg: '#2c3e50', fontSize: 16 });
+  }
+
+  function renderFailedPanel() {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, W, H);
+    rr(ctx, 40, 210, 400, 410, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e74c3c';
+    ctx.font = 'bold 36px Arial';
+    ctx.fillText(t('crash'), 240, 272);
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = '18px Arial';
+    ctx.fillText(t('crashDesc'), 240, 322);
+    ctx.fillStyle = '#7f8c8d';
+    ctx.font = '15px Arial';
+    var lines = wrapText(ctx, t('tapCarClear'), 340);
+    for (var l = 0; l < lines.length; l++) {
+      ctx.fillText(lines[l], 240, 380 + l * 20);
+    }
+    drawButton(ctx, BTN.retry, t('retry'), { bg: '#27ae60', fg: '#ffffff', fontSize: 18 });
+    drawButton(ctx, BTN.newPlan, t('newPlan'), { bg: '#ecf0f1', fg: '#2c3e50', fontSize: 18 });
+    drawButton(ctx, BTN.failLevels, t('levels'), { bg: '#ffffff', fg: '#2c3e50', fontSize: 16 });
+  }
+
+  function renderPaused() {
+    renderPlayingWorld();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+    rr(ctx, 60, 200, 360, 440, 20);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#2c3e50';
+    ctx.font = 'bold 32px Arial';
+    ctx.fillText(t('paused'), 240, 258);
+    drawButton(ctx, BTN.resume, t('resume'), { bg: '#27ae60', fg: '#ffffff', fontSize: 20 });
+    drawButton(ctx, BTN.pauseRestart, t('restart'), { bg: '#ecf0f1', fg: '#2c3e50', fontSize: 18 });
+    drawButton(ctx, BTN.pauseLevels, t('levels'), { bg: '#ecf0f1', fg: '#2c3e50', fontSize: 18 });
+    drawButton(ctx, BTN.pauseMenu, t('menu'), { bg: '#ffffff', fg: '#2c3e50', fontSize: 18 });
+  }
+
+  function renderPlayingWorld() {
+    ctx.fillStyle = theme().bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    if (shakeT > 0) {
+      ctx.translate(rand(-4, 4), rand(-4, 4));
+    }
+    drawBoardBase();
+    drawDestinations();
+    drawPaths();
+    drawObstacles();
+    drawCars();
+    drawTrees();
+    drawParticles();
+    drawPopups();
+    ctx.restore();
+    drawTopBar();
+    drawBottomBar();
+    drawToast();
+    drawMissionToast();
+  }
+
+  function renderPlaying() {
+    renderPlayingWorld();
+    if (panel === 'complete') renderCompletePanel();
+    else if (panel === 'failed') renderFailedPanel();
+  }
+
+  function render() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (state === 'menu') renderMenu();
+    else if (state === 'levels') renderLevels();
+    else if (state === 'shop') renderShop();
+    else if (state === 'playing') renderPlaying();
+    else if (state === 'paused') renderPaused();
+    else {
+      ctx.fillStyle = theme().bg;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  // ============================== Main loop ==============================
+  function loop(ts) {
+    requestAnimationFrame(loop);
+    var dt = lastTs ? (ts - lastTs) / 1000 : 0.016;
+    lastTs = ts;
+    if (dt > 0.05) dt = 0.05;
+    if (dt < 0) dt = 0;
+    time += dt;
+    // Toasts decay in every state (the shop shows purchase toasts too).
+    if (toast) { toast.t -= dt; if (toast.t <= 0) toast = null; }
+    if (missionToast) { missionToast.t -= dt; if (missionToast.t <= 0) missionToast = null; }
+    if (state === 'playing') updatePlaying(dt);
+    else if (state === 'menu') updateMenu(dt);
+    render();
+  }
+
+  // ============================== Boot ==============================
+  function boot() {
+    resize();
+    setupInput();
+    loadLevel(null, 0);
+    state = 'loading';
+    requestAnimationFrame(loop);
+
+    Bridge.init().then(function (ok) {
+      var rawLang = '';
+      if (ok) {
+        try { rawLang = window.bridge.platform.language || ''; } catch (e) {}
+      }
+      if (!rawLang && typeof navigator !== 'undefined' && navigator.language) rawLang = navigator.language;
+      setLanguage(rawLang);
+      if (ok) {
+        Bridge.subscribe();
+        Bridge.applyInitialPlatformState();
+      }
+      return Bridge.loadProgress();
+    }).then(function (progress) {
+      coins = progress.coins || 0;
+      stars = Array.isArray(progress.stars) ? progress.stars : [];
+      unlocked = clamp(progress.unlocked || 1, 1, LEVELS.length);
+      mProgress = progress.mprogress || { nocoll5: 0, stars3: 0 };
+      if (typeof mProgress.nocoll5 !== 'number') mProgress.nocoll5 = 0;
+      if (typeof mProgress.stars3 !== 'number') mProgress.stars3 = 0;
+      if (!mProgress.done || typeof mProgress.done !== 'object') mProgress.done = {};
+      hints = progress.hints || 0;
+      packUnlocked = progress.packs || { truck: 0, bus: 0 };
+      if (typeof packUnlocked.truck !== 'number') packUnlocked.truck = 0;
+      if (typeof packUnlocked.bus !== 'number') packUnlocked.bus = 0;
+      var col = progress.colors || {};
+      ownedColors = Array.isArray(col.owned) && col.owned.length > 0 ? col.owned : ['default'];
+      if (ownedColors.indexOf('default') === -1) ownedColors.unshift('default');
+      selectedColor = ownedColors.indexOf(col.selected) !== -1 ? col.selected : 'default';
+      var mp = progress.maps || {};
+      ownedMaps = Array.isArray(mp.owned) && mp.owned.length > 0 ? mp.owned : ['suburb'];
+      if (ownedMaps.indexOf('suburb') === -1) ownedMaps.unshift('suburb');
+      selectedMap = ownedMaps.indexOf(mp.selected) !== -1 ? mp.selected : 'suburb';
+      AudioSys.setUserMuted(!!progress.muted);
+      loadLevel(null, 0); // reload so the saved paint theme colors the cars
+      state = 'menu';
+      render();
+      Bridge.send('game_ready');
+    }).catch(function () {
+      // Never block the game on Bridge/storage failures.
+      state = 'menu';
+      render();
+      Bridge.send('game_ready');
+    });
+  }
+
+  // Debug hook for automated testing (?debug=1): read-only state + test helpers.
+  // Harmless in production: it only exposes game state and test helpers.
+  try {
+    if (typeof window !== 'undefined' && window.location && window.location.search.indexOf('debug') !== -1) {
+      window.TRAFFIC_DEBUG = {
+        getState: function () {
+          return {
+            state: state, phase: phase, panel: panel,
+            level: levelIndex + 1, pack: levelPack, levelLabel: packLabel(levelPack, levelIndex),
+            unlocked: unlocked, coins: coins,
+            stars: stars.slice(), goEnabled: phase === 'draw' && allPathsReady(),
+            cars: cars.map(function (car) {
+              return {
+                type: car.type, speed: car.speed, radius: car.radius, pad: car.pad,
+                x: Math.round(car.x), y: Math.round(car.y),
+                sx: car.sx, sy: car.sy, dx: car.dx, dy: car.dy, color: car.color,
+                hasPath: !!car.path, pathLen: car.path ? Math.round(car.totalLen) : 0,
+                arrived: car.arrived, crashed: car.crashed, moving: car.moving
+              };
+            }),
+            retried: retried, redraws: redraws, crashCount: crashCount,
+            lastStars: lastStars, lastCoins: lastCoins,
+            missions: MISSION_DEFS.map(function (def) {
+              var prog = missionProgress(def);
+              return { id: def.id, progress: prog, target: def.target, reward: def.reward, done: prog >= def.target };
+            }),
+            muted: AudioSys.userMuted,
+            musicStarted: AudioSys.music.started,
+            musicAudible: AudioSys.music.started && !AudioSys.isMuted() && !!AudioSys.ctx && AudioSys.ctx.state === 'running',
+            engineOn: AudioSys.engine.on,
+            hints: hints, hintActive: !!hintPath, usedHint: usedHint,
+            packs: { truck: packUnlocked.truck, bus: packUnlocked.bus },
+            ownedColors: ownedColors.slice(), selectedColor: selectedColor,
+            ownedMaps: ownedMaps.slice(), selectedMap: selectedMap,
+            shopTab: shopTab, selectTab: selectTab
+          };
+        },
+        getLevels: function () {
+          // All 40 levels in global order (main 1-30, truck 31-35, bus 36-40).
+          var all = [];
+          for (var i = 0; i < LEVELS.length; i++) {
+            var m = JSON.parse(JSON.stringify(LEVELS[i]));
+            m.pack = null; m.num = i + 1;
+            all.push(m);
+          }
+          var pk;
+          for (pk = 0; pk < PACKS.truck.levels.length; pk++) {
+            var tl = JSON.parse(JSON.stringify(PACKS.truck.levels[pk]));
+            tl.pack = 'truck'; tl.num = pk + 1;
+            all.push(tl);
+          }
+          for (pk = 0; pk < PACKS.bus.levels.length; pk++) {
+            var bl = JSON.parse(JSON.stringify(PACKS.bus.levels[pk]));
+            bl.pack = 'bus'; bl.num = pk + 1;
+            all.push(bl);
+          }
+          return all;
+        },
+        getMeta: function () {
+          return {
+            board: BOARD, carTypes: CAR_TYPES, carR: CAR_R,
+            crashDist: CRASH_DIST, destSize: DEST_SIZE, destSnap: DEST_SNAP,
+            destBlockAfter: DEST_BLOCK_AFTER
+          };
+        },
+        getShop: function () {
+          return {
+            hintSingle: SHOP.hintSingle, hintPack: SHOP.hintPack,
+            packTruck: SHOP.packTruck, packBus: SHOP.packBus,
+            palettes: JSON.parse(JSON.stringify(PALETTES)),
+            themes: JSON.parse(JSON.stringify(THEMES))
+          };
+        },
+        setLevel: function (n) {
+          // Global level number: 1-30 main, 31-35 truck, 36-40 bus.
+          n = clamp(n, 1, 40);
+          if (n <= 30) loadLevel(null, n - 1);
+          else if (n <= 35) loadLevel('truck', n - 31);
+          else loadLevel('bus', n - 36);
+          state = 'playing';
+        },
+        setPackLevel: function (pack, n) {
+          loadLevel(pack, clamp(n, 1, 5) - 1);
+          state = 'playing';
+        },
+        setHints: function (n) { hints = n; Bridge.saveProgress('hints', hints); },
+        setCoins: function (n) { coins = n; Bridge.saveProgress('coins', coins); },
+        setUnlocked: function (n) { unlocked = clamp(n, 1, LEVELS.length); Bridge.saveProgress('unlocked', unlocked); },
+        setStars: function (arr) { stars = arr.slice(); Bridge.saveProgress('stars', stars); },
+        setPath: function (carIdx, pts) {
+          var car = cars[carIdx];
+          if (!car || !pts || pts.length < 1) return false;
+          var full = [{ x: car.sx, y: car.sy }];
+          for (var i = 0; i < pts.length; i++) full.push({ x: pts[i][0], y: pts[i][1] });
+          var len = 0;
+          for (var j = 1; j < full.length; j++) {
+            var d = dist(full[j - 1].x, full[j - 1].y, full[j].x, full[j].y);
+            if (!segmentValidForPath(full[j - 1].x, full[j - 1].y, full[j].x, full[j].y, car, len)) return false;
+            len += d;
+          }
+          var last = full[full.length - 1];
+          if (dist(last.x, last.y, car.dx, car.dy) > DEST_SNAP) return false;
+          full.push({ x: car.dx, y: car.dy });
+          return finalizePath(car, full);
+        },
+        simulateWin: function (starsWanted) {
+          starsWanted = clamp(starsWanted || 3, 1, 3);
+          retried = starsWanted === 1;
+          redraws = starsWanted === 2 ? 1 : 0;
+          crashCount = starsWanted === 1 ? 1 : 0;
+          for (var i = 0; i < cars.length; i++) {
+            cars[i].arrived = true;
+            cars[i].moving = false;
+            cars[i].x = cars[i].dx;
+            cars[i].y = cars[i].dy;
+          }
+          phase = 'complete';
+          completeT = 0;
+          completeLevel();
+          panel = 'complete';
+          return true;
+        }
+      };
+    }
+  } catch (e) {}
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+
+})();
+
+</script>
+</body>
+</html>

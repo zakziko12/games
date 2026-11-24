@@ -1,0 +1,3126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1c2733">
+<title>Magnet Master — Free Online Game for Kids</title>
+<!-- Magnet Master — standalone version for GitHub Pages. -->
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #1c2733;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  #wrap {
+    position: relative;
+    line-height: 0;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+  }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="480" height="800"></canvas>
+  </div>
+  <script>
+/* =====================================================================
+   MAGNET MASTER — مغناطيس الفوضى
+   Original top-down magnet physics game for YouTube Playables / Playgama.
+   Plain JS canvas (480x800 portrait), Playgama Bridge v2.4.4, 5 languages.
+
+   Gameplay: drag the magnet with one finger. Metal pieces inside the
+   pull radius fly to the magnet and stick in a cluster ring. Collect
+   the required number to open the finish gate, then drag the magnet
+   (with its pieces) into the finish zone. Hazards: spike zones knock
+   pieces off, blockers and wood decoys block the way, enemy attractor
+   magnets steal attached pieces, repellers push the magnet away, gates
+   (pieces / key / moving) guard the route, and master levels are timed
+   with moving spikes.
+
+   Structure follows the proven patterns of Traffic Route / Cake Pop
+   Studio in this workspace: Bridge wrapper with localStorage fallback,
+   Web Audio synth SFX + adaptive BGM, interstitial every 3rd level,
+   FTUE tutorial on first play, shop with real stat differences, 3
+   missions, daily challenge. No external assets, no network calls.
+   ===================================================================== */
+(function () {
+  'use strict';
+
+  var W = 480, H = 800;
+  var STORAGE_PREFIX = 'magnet_master_';
+  var ARENA = { x: 16, y: 118, w: 448, h: 582 }; // bottom edge y = 700
+  var MAGNET_R = 22;
+  var PIECE_R = 11;
+  var TOTAL_LEVELS = 45;
+
+  // ============================== i18n ==============================
+  var lang = 'en';
+  var STRINGS = {
+    en: {
+      title: 'MAGNET MASTER', subtitle: 'Chaos Magnet',
+      play: 'PLAY', levels: 'LEVELS', shop: 'SHOP', daily: 'DAILY CHALLENGE',
+      dailyDone: 'Done — back tomorrow', dailyReward: '+200 coins',
+      missions: 'MISSIONS', coins: 'Coins', level: 'Level', menu: 'MENU',
+      resume: 'RESUME', restart: 'RESTART', pause: 'PAUSED',
+      next: 'NEXT', replay: 'REPLAY', retry: 'RETRY', skip: 'SKIP',
+      complete: 'LEVEL COMPLETE!', failed: 'TIME UP!',
+      stars: 'Stars', timeBonus: 'Time bonus', total: 'Total',
+      locked: 'Locked', buy: 'BUY', select: 'SELECT', selected: 'SELECTED',
+      owned: 'OWNED', notEnough: 'Not enough coins',
+      tabMagnets: 'Magnets', tabSkins: 'Skins', tabEnvs: 'Worlds',
+      magClassic: 'Classic Magnet', magSteel: 'Steel Magnet',
+      magSuper: 'Super Magnet', magGolden: 'Golden Magnet',
+      pull: 'Pull', power: 'Power', bonusCoins: '+10% coins',
+      skinClassic: 'Classic', skinEmerald: 'Emerald', skinSunset: 'Sunset',
+      skinOcean: 'Ocean', skinNeon: 'Neon',
+      envWorkshop: 'Workshop', envScrapyard: 'Scrapyard',
+      envNeon: 'Neon Lab', envSpace: 'Space Station',
+      mLevels: 'Complete 10 levels', mPieces: 'Collect 250 metal pieces',
+      mStars: 'Earn 3 stars on 5 levels',
+      goal: 'Collect', pieces: 'pieces', gateOpen: 'Gate open! Go to the finish!',
+      tut1: 'Drag anywhere to move the magnet',
+      tut2: 'Metal pieces stick to your magnet!',
+      tut3: 'Collect all the pieces to open the gate',
+      tut4: 'The gate is open! Drag to the glowing finish!',
+      tutDone: 'You did it! From now on, you play freely.',
+      howto: 'How to play', close: 'CLOSE',
+      howto1: 'Drag the magnet to collect metal pieces.',
+      howto2: 'Spikes knock pieces off. Enemy magnets steal them!',
+      howto3: 'Fill the goal, then reach the glowing finish zone.',
+      dailyTitle: 'Daily Challenge', dailyWin: 'Daily reward claimed!',
+      newBest: 'New best!', sec: 's'
+    },
+    ar: {
+      title: 'MAGNET MASTER', subtitle: 'مغناطيس الفوضى',
+      play: 'العب', levels: 'المستويات', shop: 'المتجر', daily: 'تحدي اليوم',
+      dailyDone: 'تم — عد غداً', dailyReward: '+200 عملة',
+      missions: 'المهام', coins: 'عملات', level: 'مستوى', menu: 'القائمة',
+      resume: 'استئناف', restart: 'إعادة', pause: 'إيقاف مؤقت',
+      next: 'التالي', replay: 'إعادة', retry: 'حاول مجدداً', skip: 'تخطي',
+      complete: 'اكتمل المستوى!', failed: 'انتهى الوقت!',
+      stars: 'نجوم', timeBonus: 'مكافأة الوقت', total: 'المجموع',
+      locked: 'مقفل', buy: 'شراء', select: 'اختيار', selected: 'مختار',
+      owned: 'مملوك', notEnough: 'عملات غير كافية',
+      tabMagnets: 'مغناطيسات', tabSkins: 'ألوان', tabEnvs: 'عوالم',
+      magClassic: 'مغناطيس كلاسيكي', magSteel: 'مغناطيس فولاذي',
+      magSuper: 'مغناطيس خارق', magGolden: 'مغناطيس ذهبي',
+      pull: 'الجذب', power: 'القوة', bonusCoins: '+10% عملات',
+      skinClassic: 'كلاسيكي', skinEmerald: 'زمردي', skinSunset: 'غروب',
+      skinOcean: 'محيط', skinNeon: 'نيون',
+      envWorkshop: 'الورشة', envScrapyard: 'ساحة الخردة',
+      envNeon: 'مختبر النيون', envSpace: 'محطة الفضاء',
+      mLevels: 'أكمل 10 مستويات', mPieces: 'اجمع 250 قطعة معدنية',
+      mStars: 'احصل على 3 نجوم في 5 مستويات',
+      goal: 'اجمع', pieces: 'قطعة', gateOpen: 'انفتحت البوابة! اذهب إلى النهاية!',
+      tut1: 'اسحب في أي مكان لتحريك المغناطيس',
+      tut2: 'القطع المعدنية تلتصق بمغناطيسك!',
+      tut3: 'اجمع كل القطع لفتح البوابة',
+      tut4: 'البوابة مفتوحة! اسحب إلى منطقة النهاية المضيئة!',
+      tutDone: 'أحسنت! من الآن تلعب بحرية.',
+      howto: 'كيف تلعب', close: 'إغلاق',
+      howto1: 'اسحب المغناطيس لجمع القطع المعدنية.',
+      howto2: 'الأشواك تسقط القطع. المغناطيسات المعادية تسرقها!',
+      howto3: 'أكمل الهدف ثم اذهب إلى منطقة النهاية المضيئة.',
+      dailyTitle: 'تحدي اليوم', dailyWin: 'تم الحصول على مكافأة اليوم!',
+      newBest: 'رقم قياسي جديد!', sec: 'ث'
+    },
+    fr: {
+      title: 'MAGNET MASTER', subtitle: 'Aimant du chaos',
+      play: 'JOUER', levels: 'NIVEAUX', shop: 'BOUTIQUE', daily: 'DÉFI DU JOUR',
+      dailyDone: 'Fait — à demain', dailyReward: '+200 pièces',
+      missions: 'MISSIONS', coins: 'Pièces', level: 'Niveau', menu: 'MENU',
+      resume: 'REPRENDRE', restart: 'RECOMMENCER', pause: 'PAUSE',
+      next: 'SUIVANT', replay: 'REJOUER', retry: 'RÉESSAYER', skip: 'PASSER',
+      complete: 'NIVEAU TERMINÉ !', failed: 'TEMPS ÉCOULÉ !',
+      stars: 'Étoiles', timeBonus: 'Bonus temps', total: 'Total',
+      locked: 'Verrouillé', buy: 'ACHETER', select: 'CHOISIR', selected: 'CHOISI',
+      owned: 'POSSÉDÉ', notEnough: 'Pas assez de pièces',
+      tabMagnets: 'Aimants', tabSkins: 'Couleurs', tabEnvs: 'Mondes',
+      magClassic: 'Aimant classique', magSteel: 'Aimant acier',
+      magSuper: 'Super aimant', magGolden: 'Aimant doré',
+      pull: 'Attraction', power: 'Puissance', bonusCoins: '+10% pièces',
+      skinClassic: 'Classique', skinEmerald: 'Émeraude', skinSunset: 'Coucher',
+      skinOcean: 'Océan', skinNeon: 'Néon',
+      envWorkshop: 'Atelier', envScrapyard: 'Casse',
+      envNeon: 'Labo néon', envSpace: 'Station spatiale',
+      mLevels: 'Termine 10 niveaux', mPieces: 'Collecte 250 pièces métalliques',
+      mStars: '3 étoiles sur 5 niveaux',
+      goal: 'Collecte', pieces: 'pièces', gateOpen: 'Porte ouverte ! Va vers la fin !',
+      tut1: 'Glisse pour déplacer l’aimant',
+      tut2: 'Les pièces métalliques collent à ton aimant !',
+      tut3: 'Collecte les pièces pour ouvrir la porte',
+      tut4: 'Porte ouverte ! Va vers la zone lumineuse !',
+      tutDone: 'Bravo ! À toi de jouer librement.',
+      howto: 'Comment jouer', close: 'FERMER',
+      howto1: 'Glisse l’aimant pour collecter les pièces métalliques.',
+      howto2: 'Les pics font tomber les pièces. Les aimants ennemis les volent !',
+      howto3: 'Remplis l’objectif, puis atteins la zone lumineuse.',
+      dailyTitle: 'Défi du jour', dailyWin: 'Récompense du jour gagnée !',
+      newBest: 'Nouveau record !', sec: 's'
+    },
+    es: {
+      title: 'MAGNET MASTER', subtitle: 'Imán del caos',
+      play: 'JUGAR', levels: 'NIVELES', shop: 'TIENDA', daily: 'RETO DIARIO',
+      dailyDone: 'Hecho — vuelve mañana', dailyReward: '+200 monedas',
+      missions: 'MISIONES', coins: 'Monedas', level: 'Nivel', menu: 'MENÚ',
+      resume: 'SEGUIR', restart: 'REINICIAR', pause: 'PAUSA',
+      next: 'SIGUIENTE', replay: 'REPETIR', retry: 'REINTENTAR', skip: 'SALTAR',
+      complete: '¡NIVEL COMPLETADO!', failed: '¡TIEMPO AGOTADO!',
+      stars: 'Estrellas', timeBonus: 'Bonus de tiempo', total: 'Total',
+      locked: 'Bloqueado', buy: 'COMPRAR', select: 'ELEGIR', selected: 'ELEGIDO',
+      owned: 'COMPRADO', notEnough: 'No tienes suficientes monedas',
+      tabMagnets: 'Imanes', tabSkins: 'Colores', tabEnvs: 'Mundos',
+      magClassic: 'Imán clásico', magSteel: 'Imán de acero',
+      magSuper: 'Súper imán', magGolden: 'Imán dorado',
+      pull: 'Atracción', power: 'Fuerza', bonusCoins: '+10% monedas',
+      skinClassic: 'Clásico', skinEmerald: 'Esmeralda', skinSunset: 'Atardecer',
+      skinOcean: 'Océano', skinNeon: 'Neón',
+      envWorkshop: 'Taller', envScrapyard: 'Chatarrería',
+      envNeon: 'Lab. neón', envSpace: 'Estación espacial',
+      mLevels: 'Completa 10 niveles', mPieces: 'Recoge 250 piezas metálicas',
+      mStars: '3 estrellas en 5 niveles',
+      goal: 'Recoge', pieces: 'piezas', gateOpen: '¡Puerta abierta! ¡Ve a la meta!',
+      tut1: 'Arrastra para mover el imán',
+      tut2: '¡Las piezas metálicas se pegan a tu imán!',
+      tut3: 'Recoge todas las piezas para abrir la puerta',
+      tut4: '¡Puerta abierta! ¡Ve a la zona brillante!',
+      tutDone: '¡Lo lograste! Ahora juegas libremente.',
+      howto: 'Cómo jugar', close: 'CERRAR',
+      howto1: 'Arrastra el imán para recoger piezas metálicas.',
+      howto2: 'Los pinchos tiran las piezas. ¡Los imanes enemigos las roban!',
+      howto3: 'Completa el objetivo y llega a la zona brillante.',
+      dailyTitle: 'Reto diario', dailyWin: '¡Recompensa diaria conseguida!',
+      newBest: '¡Nuevo récord!', sec: 's'
+    },
+    de: {
+      title: 'MAGNET MASTER', subtitle: 'Chaos-Magnet',
+      play: 'SPIELEN', levels: 'LEVEL', shop: 'SHOP', daily: 'TÄGLICHE HERAUSFORDERUNG',
+      dailyDone: 'Erledigt — morgen wieder', dailyReward: '+200 Münzen',
+      missions: 'MISSIONEN', coins: 'Münzen', level: 'Level', menu: 'MENÜ',
+      resume: 'WEITER', restart: 'NEUSTART', pause: 'PAUSE',
+      next: 'WEITER', replay: 'WIEDERHOLEN', retry: 'NOCHMAL', skip: 'ÜBERSPRINGEN',
+      complete: 'LEVEL GESCHAFFT!', failed: 'ZEIT UM!',
+      stars: 'Sterne', timeBonus: 'Zeitbonus', total: 'Gesamt',
+      locked: 'Gesperrt', buy: 'KAUFEN', select: 'WÄHLEN', selected: 'GEWÄHLT',
+      owned: 'GEKAUFT', notEnough: 'Nicht genug Münzen',
+      tabMagnets: 'Magnete', tabSkins: 'Farben', tabEnvs: 'Welten',
+      magClassic: 'Klassik-Magnet', magSteel: 'Stahl-Magnet',
+      magSuper: 'Super-Magnet', magGolden: 'Gold-Magnet',
+      pull: 'Reichweite', power: 'Stärke', bonusCoins: '+10% Münzen',
+      skinClassic: 'Klassik', skinEmerald: 'Smaragd', skinSunset: 'Sonnenuntergang',
+      skinOcean: 'Ozean', skinNeon: 'Neon',
+      envWorkshop: 'Werkstatt', envScrapyard: 'Schrottplatz',
+      envNeon: 'Neon-Labor', envSpace: 'Raumstation',
+      mLevels: 'Schaffe 10 Level', mPieces: 'Sammle 250 Metallteile',
+      mStars: '3 Sterne in 5 Leveln',
+      goal: 'Sammle', pieces: 'Teile', gateOpen: 'Tor offen! Ab zum Ziel!',
+      tut1: 'Ziehe, um den Magneten zu bewegen',
+      tut2: 'Metallteile haften an deinem Magneten!',
+      tut3: 'Sammle alle Teile für das Tor',
+      tut4: 'Tor offen! Ziehe zur leuchtenden Zone!',
+      tutDone: 'Geschafft! Ab jetzt spielst du frei.',
+      howto: 'So geht’s', close: 'SCHLIESSEN',
+      howto1: 'Ziehe den Magneten, um Metallteile zu sammeln.',
+      howto2: 'Stacheln werfen Teile ab. Feindmagnete stehlen sie!',
+      howto3: 'Erfülle das Ziel und erreiche die leuchtende Zone.',
+      dailyTitle: 'Tägliche Herausforderung', dailyWin: 'Tagesbelohnung erhalten!',
+      newBest: 'Neuer Rekord!', sec: 's'
+    }
+  };
+
+  function setLanguage(raw) {
+    var code = (raw || '').toString().toLowerCase().slice(0, 2);
+    lang = STRINGS[code] ? code : 'en';
+  }
+  function t(key) {
+    if (STRINGS[lang] && STRINGS[lang][key]) return STRINGS[lang][key];
+    return STRINGS.en[key] || key;
+  }
+  var LANG_ORDER = ['en', 'ar', 'fr', 'es', 'de'];
+
+  // ============================== Helpers ==============================
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function dist(x1, y1, x2, y2) { var dx = x2 - x1, dy = y2 - y1; return Math.sqrt(dx * dx + dy * dy); }
+  function hit(px, py, r) {
+    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+  }
+  function rr(c, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+  function easeOutCubic(f) { return 1 - Math.pow(1 - f, 3); }
+  function easeOutBack(f) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(f - 1, 3) + c1 * Math.pow(f - 1, 2); }
+  function drawStarShape(c, cx, cy, r, fill) {
+    c.beginPath();
+    for (var i = 0; i < 10; i++) {
+      var rad = i % 2 === 0 ? r : r * 0.45;
+      var a = -Math.PI / 2 + i * Math.PI / 5;
+      var x = cx + Math.cos(a) * rad, y = cy + Math.sin(a) * rad;
+      if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    }
+    c.closePath();
+    c.fillStyle = fill;
+    c.fill();
+  }
+  // Deterministic hash in [0,1) — stable decoration, no RNG drift.
+  function hash(n) { var x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+
+  // ============================== Canvas ==============================
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var dpr = 1;
+
+  function resize() {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var scale = Math.min(vw / W, vh / H);
+    canvas.style.width = Math.floor(W * scale) + 'px';
+    canvas.style.height = Math.floor(H * scale) + 'px';
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+  }
+  function toLogical(e) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / rect.width * W,
+      y: (e.clientY - rect.top) / rect.height * H
+    };
+  }
+
+  // ============================== Audio (WebAudio synth) ==============================
+  // Full SFX spec + adaptive BGM. Every sound is logged (AudioSys.log)
+  // so automated tests can verify sounds fire — audible output itself
+  // cannot be checked headless.
+  var AudioSys = {
+    ctx: null, master: null, musicGain: null,
+    userMuted: false, platformMuted: false, adOpen: false, paused: false,
+    log: [], // capped call log: {name, at}
+    ensure: function () {
+      if (this.ctx) {
+        if (this.ctx.state === 'suspended') { try { this.ctx.resume(); } catch (e) {} }
+        return;
+      }
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this.ctx = new AC();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.isMuted() ? 0 : 0.5;
+        this.master.connect(this.ctx.destination);
+        this.musicGain = this.ctx.createGain();
+        this.musicGain.gain.value = 0.5;
+        this.musicGain.connect(this.master);
+      } catch (e) { this.ctx = null; }
+    },
+    unlock: function () { this.ensure(); this.startMusic(); },
+    isMuted: function () { return this.userMuted || this.platformMuted || this.adOpen || this.paused; },
+    applyMute: function () {
+      if (this.master && this.ctx) {
+        this.master.gain.setValueAtTime(this.isMuted() ? 0 : 0.5, this.ctx.currentTime);
+      }
+      if (this.isMuted()) this.stopHum();
+    },
+    setUserMuted: function (m) { this.userMuted = m; this.applyMute(); },
+    setPlatformMuted: function (m) { this.platformMuted = m; this.applyMute(); },
+    setAdOpen: function (o) { this.adOpen = o; this.applyMute(); },
+    setPaused: function (p) { this.paused = p; this.applyMute(); },
+    record: function (name) {
+      this.log.push({ name: name, at: Date.now() });
+      if (this.log.length > 200) this.log.splice(0, this.log.length - 200);
+    },
+    tone: function (fA, fB, dur, type, vol, delay, dest) {
+      if (!this.ctx || !this.master || this.isMuted()) return;
+      try {
+        var t0 = this.ctx.currentTime + (delay || 0);
+        var o = this.ctx.createOscillator();
+        var g = this.ctx.createGain();
+        o.type = type || 'sine';
+        o.frequency.setValueAtTime(fA, t0);
+        if (fB !== fA) o.frequency.exponentialRampToValueAtTime(Math.max(1, fB), t0 + dur);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(vol || 0.4, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(g); g.connect(dest || this.master);
+        o.start(t0); o.stop(t0 + dur + 0.02);
+      } catch (e) {}
+    },
+    noiseBurst: function (dur, vol, freq, q) {
+      if (!this.ctx || !this.master || this.isMuted()) return;
+      try {
+        var t0 = this.ctx.currentTime;
+        var len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+        var buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+        var data = buf.getChannelData(0);
+        for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+        var src = this.ctx.createBufferSource();
+        src.buffer = buf;
+        var g = this.ctx.createGain();
+        g.gain.value = vol || 0.5;
+        var node = src;
+        if (freq) {
+          var f = this.ctx.createBiquadFilter();
+          f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q || 1;
+          src.connect(f); node = f;
+        }
+        node.connect(g); g.connect(this.master);
+        src.start(t0);
+      } catch (e) {}
+    },
+    // ---- SFX (spec) ----
+    click: function () { this.record('click'); this.tone(620, 520, 0.06, 'sine', 0.3); },
+    clink: function () { // metal attach
+      this.record('clink');
+      var f = 1400 + Math.random() * 900;
+      this.tone(f, f * 0.9, 0.07, 'triangle', 0.35);
+      this.tone(f * 2.1, f * 1.9, 0.05, 'sine', 0.18);
+    },
+    gateOpen: function () {
+      this.record('gateOpen');
+      this.tone(523, 523, 0.1, 'sine', 0.35);
+      this.tone(784, 784, 0.12, 'sine', 0.35, 0.09);
+      this.tone(1046, 1046, 0.2, 'sine', 0.35, 0.18);
+    },
+    knockoff: function () { // obstacle hit / pieces knocked off
+      this.record('knockoff');
+      this.tone(180, 70, 0.25, 'sawtooth', 0.35);
+      this.noiseBurst(0.2, 0.5, 900, 1);
+      this.tone(900, 500, 0.08, 'triangle', 0.25, 0.05);
+    },
+    whoosh: function () { // repel push
+      this.record('whoosh');
+      this.noiseBurst(0.25, 0.35, 600, 0.7);
+      this.tone(300, 700, 0.2, 'sine', 0.15);
+    },
+    steal: function () { // enemy magnet steals a piece
+      this.record('steal');
+      this.tone(700, 350, 0.18, 'triangle', 0.3);
+    },
+    win: function () {
+      this.record('win');
+      this.tone(523, 523, 0.12, 'sine', 0.4);
+      this.tone(659, 659, 0.12, 'sine', 0.4, 0.12);
+      this.tone(784, 784, 0.12, 'sine', 0.4, 0.24);
+      this.tone(1046, 1046, 0.24, 'sine', 0.4, 0.36);
+    },
+    coin: function () {
+      this.record('coin');
+      this.tone(880, 880, 0.07, 'sine', 0.4);
+      this.tone(1318, 1318, 0.13, 'sine', 0.4, 0.07);
+    },
+    unlockSound: function () {
+      this.record('unlock');
+      this.tone(659, 659, 0.1, 'sine', 0.35);
+      this.tone(988, 988, 0.18, 'sine', 0.35, 0.1);
+    },
+    denied: function () { this.record('denied'); this.tone(220, 160, 0.15, 'square', 0.2); },
+    fail: function () { // soft failure — simple, NOT annoying
+      this.record('fail');
+      this.tone(392, 330, 0.25, 'sine', 0.25);
+      this.tone(330, 262, 0.3, 'sine', 0.22, 0.2);
+    },
+    star: function () { this.record('star'); this.tone(1568, 2093, 0.15, 'sine', 0.35); },
+    // ---- Magnet hum: continuous soft oscillator while dragging ----
+    hum: { osc: null, gain: null, on: false },
+    startHum: function () {
+      if (!this.ctx || !this.master || this.hum.on || this.isMuted()) return;
+      try {
+        var o = this.ctx.createOscillator();
+        var g = this.ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = 82;
+        g.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.06, this.ctx.currentTime + 0.1);
+        o.connect(g); g.connect(this.master);
+        o.start();
+        this.hum.osc = o; this.hum.gain = g; this.hum.on = true;
+        this.record('humStart');
+      } catch (e) {}
+    },
+    stopHum: function () {
+      if (!this.hum.on) return;
+      try {
+        var t0 = this.ctx.currentTime;
+        this.hum.gain.gain.setValueAtTime(this.hum.gain.gain.value, t0);
+        this.hum.gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.08);
+        this.hum.osc.stop(t0 + 0.1);
+      } catch (e) {}
+      this.hum.on = false; this.hum.osc = null; this.hum.gain = null;
+    },
+    // ---- Adaptive BGM ----
+    // mode: 'menu' (calm pad, slow), 'level' (upbeat, melody + bass),
+    // 'tense' (timer low: faster minor arpeggio). Scheduled with a
+    // lookahead timer; starts only after first interaction via unlock().
+    music: { started: false, step: 0, nextT: 0, timer: null, mode: 'menu' },
+    MUSIC_CHORDS: [
+      [261.63, 329.63, 392.00, 493.88],
+      [220.00, 261.63, 329.63, 392.00],
+      [174.61, 220.00, 261.63, 329.63],
+      [196.00, 246.94, 293.66, 349.23]
+    ],
+    MUSIC_BASS: [130.81, 110.00, 87.31, 98.00],
+    MUSIC_MELODY: [659.25, 783.99, 880.00, 783.99, 659.25, 587.33, 523.25, 587.33,
+                   698.46, 659.25, 587.33, 523.25, 587.33, 659.25, 783.99, 659.25],
+    MUSIC_TENSE: [440.00, 415.30, 440.00, 523.25, 440.00, 415.30, 392.00, 415.30],
+    setMusicMode: function (mode) {
+      if (this.music.mode !== mode) { this.music.mode = mode; this.music.step = 0; }
+    },
+    noteAt: function (freq, t0, dur, type, vol, attack) {
+      if (!this.ctx || !this.musicGain) return;
+      try {
+        var o = this.ctx.createOscillator();
+        var g = this.ctx.createGain();
+        o.type = type || 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.linearRampToValueAtTime(vol || 0.05, t0 + (attack || 0.05));
+        g.gain.setValueAtTime(vol || 0.05, t0 + Math.max(0.05, dur - 0.18));
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(g); g.connect(this.musicGain);
+        o.start(t0); o.stop(t0 + dur + 0.05);
+      } catch (e) {}
+    },
+    startMusic: function () {
+      if (!this.ctx || this.music.started) return;
+      this.music.started = true;
+      this.music.step = 0;
+      this.music.nextT = this.ctx.currentTime + 0.1;
+      var self = this;
+      this.music.timer = setInterval(function () { self.scheduleMusic(); }, 120);
+    },
+    scheduleMusic: function () {
+      if (!this.ctx) return;
+      var stepDur = this.music.mode === 'tense' ? 0.28 : (this.music.mode === 'level' ? 0.42 : 0.6);
+      while (this.music.nextT < this.ctx.currentTime + 0.35) {
+        var t0 = this.music.nextT;
+        var step = this.music.step;
+        var chordIdx = Math.floor(step / 4) % 4;
+        if (this.music.mode === 'menu') {
+          if (step % 4 === 0) {
+            for (var i = 0; i < 4; i++) this.noteAt(this.MUSIC_CHORDS[chordIdx][i], t0, 2.4, 'triangle', 0.035, 0.4);
+            this.noteAt(this.MUSIC_BASS[chordIdx], t0, 2.4, 'sine', 0.05, 0.3);
+          }
+          if (step % 2 === 0) this.noteAt(this.MUSIC_MELODY[step % 16], t0, 0.9, 'sine', 0.03, 0.05);
+        } else if (this.music.mode === 'level') {
+          if (step % 4 === 0) {
+            for (var j = 0; j < 3; j++) this.noteAt(this.MUSIC_CHORDS[chordIdx][j], t0, 1.6, 'triangle', 0.04, 0.1);
+            this.noteAt(this.MUSIC_BASS[chordIdx], t0, 0.5, 'sine', 0.07, 0.02);
+          }
+          this.noteAt(this.MUSIC_MELODY[step % 16], t0, 0.35, 'sine', 0.045, 0.02);
+          if (step % 2 === 0) this.noteAt(this.MUSIC_BASS[chordIdx] * 2, t0, 0.2, 'sine', 0.03, 0.02);
+        } else { // tense
+          this.noteAt(this.MUSIC_TENSE[step % 8], t0, 0.24, 'triangle', 0.055, 0.01);
+          if (step % 4 === 0) this.noteAt(110, t0, 1.0, 'sine', 0.07, 0.05);
+        }
+        this.music.nextT += stepDur;
+        this.music.step++;
+      }
+    }
+  };
+
+  // ============================== Bridge wrapper ==============================
+  // Every call is guarded: the game works fully with no Bridge at all.
+  var Bridge = {
+    available: false,
+    platformId: null,
+    init: function () {
+      var self = this;
+      return new Promise(function (resolve) {
+        try {
+          if (typeof window.bridge === 'undefined' || !window.bridge.initialize) { resolve(false); return; }
+          var done = false;
+          var timer = setTimeout(function () { if (!done) { done = true; resolve(false); } }, 5000);
+          window.bridge.initialize().then(function () {
+            if (done) return;
+            done = true; clearTimeout(timer);
+            self.available = true;
+            try { self.platformId = window.bridge.platform ? window.bridge.platform.id : null; } catch (e) {}
+            resolve(true);
+          }).catch(function () {
+            if (done) return;
+            done = true; clearTimeout(timer);
+            resolve(false);
+          });
+        } catch (e) { resolve(false); }
+      });
+    },
+    useBridgeStorage: function () {
+      // On a real platform, Bridge storage is the only store. In mock/local
+      // mode it does not persist, so localStorage is the fallback there.
+      return this.available && this.platformId !== 'mock';
+    },
+    subscribe: function () {
+      try {
+        var b = window.bridge;
+        if (!b || !b.EVENT_NAME) return;
+        if (b.platform && b.platform.on) {
+          b.platform.on(b.EVENT_NAME.PAUSE_STATE_CHANGED, function (isPaused) { onPlatformPause(!!isPaused); });
+          b.platform.on(b.EVENT_NAME.AUDIO_STATE_CHANGED, function (isEnabled) { AudioSys.setPlatformMuted(!isEnabled); });
+        }
+        if (b.advertisement && b.advertisement.on) {
+          b.advertisement.on(b.EVENT_NAME.INTERSTITIAL_STATE_CHANGED, function (st) {
+            if (st === 'opened') AudioSys.setAdOpen(true);
+            else if (st === 'closed' || st === 'failed') AudioSys.setAdOpen(false);
+          });
+        }
+      } catch (e) {}
+    },
+    applyInitialPlatformState: function () {
+      try {
+        var b = window.bridge;
+        if (!b) return;
+        if (b.platform && b.platform.isAudioEnabled === false) AudioSys.setPlatformMuted(true);
+        if (b.advertisement && b.advertisement.interstitialState === 'opened') AudioSys.setAdOpen(true);
+      } catch (e) {}
+    },
+    send: function (msg) {
+      if (!this.available) return;
+      try {
+        var p = window.bridge.platform.sendMessage(msg);
+        if (p && p.catch) p.catch(function () {});
+      } catch (e) {}
+    },
+    showInterstitial: function () {
+      if (!this.available) return;
+      try {
+        var ad = window.bridge.advertisement;
+        if (ad && ad.isInterstitialSupported) ad.showInterstitial('game_over');
+      } catch (e) { /* ads must never break the game */ }
+    },
+    loadProgress: function () {
+      var self = this;
+      var KEYS = ['coins', 'stars', 'unlocked', 'mprogress', 'muted', 'shop',
+                  'tutorial', 'totalPieces', 'lastDaily', 'levelsCompleted', 'lang'];
+      return new Promise(function (resolve) {
+        var out = {
+          coins: 0, stars: [], unlocked: 1,
+          mprogress: { levels10: 0, pieces250: 0, stars5: 0 },
+          muted: false,
+          shop: { magnets: { owned: ['classic'], selected: 'classic' },
+                  skins: { owned: ['classic'], selected: 'classic' },
+                  envs: { owned: ['workshop'], selected: 'workshop' } },
+          tutorial: false, totalPieces: 0, lastDaily: '', levelsCompleted: 0, lang: ''
+        };
+        function fromLocal() {
+          out.coins = readLocalInt('coins', 0);
+          out.stars = readLocalJson('stars', []);
+          out.unlocked = clamp(readLocalInt('unlocked', 1), 1, TOTAL_LEVELS);
+          out.mprogress = readLocalJson('mprogress', { levels10: 0, pieces250: 0, stars5: 0 });
+          out.muted = readLocalBool('muted', false);
+          out.shop = readLocalJson('shop', out.shop);
+          out.tutorial = readLocalBool('tutorial', false);
+          out.totalPieces = readLocalInt('totalPieces', 0);
+          out.lastDaily = readLocalStr('lastDaily', '');
+          out.levelsCompleted = readLocalInt('levelsCompleted', 0);
+          out.lang = readLocalStr('lang', '');
+          resolve(out);
+        }
+        if (!self.useBridgeStorage()) { fromLocal(); return; }
+        try {
+          window.bridge.storage.get(KEYS).then(function (res) {
+            var vals = null;
+            if (Array.isArray(res)) vals = res;
+            else if (res && typeof res === 'object') {
+              vals = KEYS.map(function (k) { return res[k]; });
+            }
+            if (vals) {
+              var gi = function (i, key, def) {
+                if (vals[i] !== null && vals[i] !== undefined) {
+                  var n = parseInt(vals[i], 10);
+                  return isNaN(n) ? def : n;
+                }
+                return readLocalInt(key, def);
+              };
+              var gj = function (i, key, def) {
+                if (vals[i] !== null && vals[i] !== undefined) {
+                  try { return JSON.parse(vals[i]) || def; } catch (e) { return readLocalJson(key, def); }
+                }
+                return readLocalJson(key, def);
+              };
+              var gs = function (i, key, def) {
+                if (vals[i] !== null && vals[i] !== undefined) return String(vals[i]);
+                return readLocalStr(key, def);
+              };
+              out.coins = gi(0, 'coins', 0);
+              out.stars = gj(1, 'stars', []);
+              out.unlocked = clamp(gi(2, 'unlocked', 1), 1, TOTAL_LEVELS);
+              out.mprogress = gj(3, 'mprogress', { levels10: 0, pieces250: 0, stars5: 0 });
+              out.muted = (vals[4] !== null && vals[4] !== undefined) ? (String(vals[4]) === '1' || vals[4] === true) : readLocalBool('muted', false);
+              out.shop = gj(5, 'shop', out.shop);
+              out.tutorial = (vals[6] !== null && vals[6] !== undefined) ? (String(vals[6]) === '1' || vals[6] === true) : readLocalBool('tutorial', false);
+              out.totalPieces = gi(7, 'totalPieces', 0);
+              out.lastDaily = gs(8, 'lastDaily', '');
+              out.levelsCompleted = gi(9, 'levelsCompleted', 0);
+              out.lang = gs(10, 'lang', '');
+              resolve(out);
+            } else { fromLocal(); }
+          }).catch(function () { fromLocal(); });
+        } catch (e) { fromLocal(); }
+      });
+    },
+    saveProgress: function (key, value) {
+      var self = this;
+      var str = (typeof value === 'string') ? value : JSON.stringify(value);
+      if (self.useBridgeStorage()) {
+        try {
+          window.bridge.storage.set([key], [str]).then(function () {}, function () {
+            writeLocal(key, str);
+          });
+          return;
+        } catch (e) { /* fall through to local */ }
+      }
+      writeLocal(key, str);
+    }
+  };
+
+  function readLocalInt(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (v === null || v === undefined) return def;
+      var n = parseInt(v, 10);
+      return isNaN(n) ? def : n;
+    } catch (e) { return def; }
+  }
+  function readLocalBool(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (v === null || v === undefined) return def;
+      return v === '1' || v === 'true';
+    } catch (e) { return def; }
+  }
+  function readLocalStr(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      return (v === null || v === undefined) ? def : String(v);
+    } catch (e) { return def; }
+  }
+  function readLocalJson(key, def) {
+    try {
+      var v = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (v === null || v === undefined) return def;
+      var parsed = JSON.parse(v);
+      return (parsed === null || parsed === undefined) ? def : parsed;
+    } catch (e) { return def; }
+  }
+  function writeLocal(key, value) {
+    try { window.localStorage.setItem(STORAGE_PREFIX + key, String(value)); } catch (e) {}
+  }
+
+  // ============================== Game state ==============================
+  // state: 'loading' | 'menu' | 'levels' | 'shop' | 'playing'
+  // panel (inside 'playing'): null | 'paused' | 'complete' | 'failed'
+  //         (inside 'menu'):  null | 'howto'
+  var state = 'loading';
+  var panel = null;
+  var time = 0;      // global clock (seconds, always runs)
+  var lastTs = 0;
+
+  // Persistent meta-progression (Bridge storage, localStorage fallback).
+  var coins = 0;
+  var stars = [];          // stars[i] = 0..3 for level i (0-based)
+  var unlocked = 1;        // highest unlocked level number (1-based)
+  var mClaimed = { levels10: 0, pieces250: 0, stars5: 0 };
+  var totalPieces = 0;     // cumulative pieces ever collected
+  var levelsCompleted = 0; // total level completions (drives interstitials)
+  var lastDaily = '';      // 'YYYY-MM-DD' of last claimed daily reward
+  var ownedMagnets = ['classic'], selectedMagnet = 'classic';
+  var ownedSkins = ['classic'], selectedSkin = 'classic';
+  var ownedEnvs = ['workshop'], selectedEnv = 'workshop';
+
+  // FTUE (see tutorial section below).
+  var tutorialDone = false;
+  var tutorialActive = false;
+  var tutorialReplay = false;
+  var tutT = 0;
+  var tutLastPhase = null;
+
+  // Shop UI.
+  var shopTab = 'magnets'; // 'magnets' | 'skins' | 'envs'
+  var shopScroll = 0;
+  var levelsScroll = 0;
+  var toast = null;        // { text, until }
+  var toastUntil = 0;
+
+  // ============================== Shop data ==============================
+  // Magnets: real stat differences (pull radius + pull strength).
+  var MAGNETS = [
+    { id: 'classic', nameKey: 'magClassic', price: 0,    pullR: 90,  pull: 1.0, coinBonus: 0 },
+    { id: 'steel',   nameKey: 'magSteel',   price: 250,  pullR: 110, pull: 1.2, coinBonus: 0 },
+    { id: 'super',   nameKey: 'magSuper',   price: 600,  pullR: 135, pull: 1.5, coinBonus: 0 },
+    { id: 'golden',  nameKey: 'magGolden',  price: 1200, pullR: 160, pull: 1.8, coinBonus: 0.10 }
+  ];
+  // Skins: magnet color themes (visual only).
+  var SKINS = [
+    { id: 'classic', nameKey: 'skinClassic', price: 0,   a: '#e33b3b', b: '#f5f5f5', ring: 'rgba(227,59,59,0.35)', glow: '#ff6b6b' },
+    { id: 'emerald', nameKey: 'skinEmerald', price: 150, a: '#10b981', b: '#d1fae5', ring: 'rgba(16,185,129,0.35)', glow: '#34d399' },
+    { id: 'sunset',  nameKey: 'skinSunset',  price: 200, a: '#f97316', b: '#ffe4e6', ring: 'rgba(249,115,22,0.35)',  glow: '#fb923c' },
+    { id: 'ocean',   nameKey: 'skinOcean',   price: 250, a: '#0ea5e9', b: '#e0f2fe', ring: 'rgba(14,165,233,0.35)',  glow: '#38bdf8' },
+    { id: 'neon',    nameKey: 'skinNeon',    price: 300, a: '#a855f7', b: '#f5d0fe', ring: 'rgba(168,85,247,0.40)',  glow: '#c084fc' }
+  ];
+  // Environments: visual restyle of the whole arena (layouts unchanged).
+  var ENVS = [
+    { id: 'workshop', nameKey: 'envWorkshop', price: 0 },
+    { id: 'scrapyard', nameKey: 'envScrapyard', price: 300 },
+    { id: 'neon', nameKey: 'envNeon', price: 500 },
+    { id: 'space', nameKey: 'envSpace', price: 800 }
+  ];
+  function magnetDef(id) { for (var i = 0; i < MAGNETS.length; i++) if (MAGNETS[i].id === id) return MAGNETS[i]; return MAGNETS[0]; }
+  function skinDef(id) { for (var i = 0; i < SKINS.length; i++) if (SKINS[i].id === id) return SKINS[i]; return SKINS[0]; }
+  function envDef(id) { for (var i = 0; i < ENVS.length; i++) if (ENVS[i].id === id) return ENVS[i]; return ENVS[0]; }
+
+  // ============================== Missions ==============================
+  var MISSION_DEFS = [
+    { id: 'levels10', nameKey: 'mLevels', target: 10, reward: 150 },
+    { id: 'pieces250', nameKey: 'mPieces', target: 250, reward: 150 },
+    { id: 'stars5', nameKey: 'mStars', target: 5, reward: 200 }
+  ];
+  function missionProgress(def) {
+    if (def.id === 'levels10') {
+      var n = 0;
+      for (var i = 0; i < stars.length; i++) if (stars[i] > 0) n++;
+      return n;
+    }
+    if (def.id === 'pieces250') return totalPieces;
+    if (def.id === 'stars5') {
+      var s = 0;
+      for (var j = 0; j < stars.length; j++) if (stars[j] >= 3) s++;
+      return s;
+    }
+    return 0;
+  }
+  function checkMissions() {
+    // Pays each mission once, the moment its target is reached.
+    for (var i = 0; i < MISSION_DEFS.length; i++) {
+      var def = MISSION_DEFS[i];
+      if (!mClaimed[def.id] && missionProgress(def) >= def.target) {
+        mClaimed[def.id] = 1;
+        coins += def.reward;
+        Bridge.saveProgress('mprogress', mClaimed);
+        Bridge.saveProgress('coins', coins);
+        showToast('+' + def.reward + ' ' + t('coins') + ' — ' + t(def.nameKey));
+        AudioSys.unlockSound();
+      }
+    }
+  }
+  function showToast(text) {
+    toast = text;
+    toastUntil = time + 2.5;
+  }
+
+  // ============================== Levels ==============================
+  // Format per level:
+  //   req: pieces to collect to open the finish gate
+  //   par: seconds for 3 stars (with zero knock-offs)
+  //   time: null (untimed) or countdown seconds (timeout = fail)
+  //   start/finish: [x, y] (finish zone radius 36)
+  //   clusters: [x, y, count] — metal pieces in a tight deterministic blob
+  //   blocks: [x, y, w, h] — static rect blockers
+  //   spikes: [x, y, r] static, or {x,y,r,dx,dy,range,speed} moving
+  //   wood: [x, y, r] — non-metal decoys, never attracted, block the magnet
+  //   attractors: [x, y] — enemy magnets, steal range 130
+  //   repellers: [x, y] — push the magnet away within 110
+  //   gates: {x,y,w,h,kind} — 'pieces' (opens at req, or openAt),
+  //          'key' (opens when key keyIdx collected), 'moving' (oscillates)
+  //   keys: [[x, y], ...] — golden key gears (each counts as 1 piece)
+  //   path: solution waypoints the magnet follows (used by the test suite);
+  //         every path stays clear of spikes (37px+) and attractor range
+  //         (130px+). Repeller zones are safe to cross (push only).
+  var ATTRACTOR_R = 130, REPELLER_R = 110, FINISH_R = 36;
+  var LEVELS = [
+    // ---- L1-10: pure collection ----
+    { req: 4, par: 30, start: [60, 170], finish: [420, 650],
+      clusters: [[150, 240, 2], [300, 400, 2], [240, 560, 2]],
+      path: [[60, 170], [150, 240], [300, 400], [240, 560], [420, 650]] },
+    { req: 5, par: 30, start: [420, 170], finish: [60, 650],
+      clusters: [[330, 260, 2], [200, 420, 3], [140, 560, 2]],
+      path: [[420, 170], [330, 260], [200, 420], [140, 560], [60, 650]] },
+    { req: 6, par: 35, start: [240, 160], finish: [240, 660],
+      clusters: [[120, 260, 2], [360, 300, 2], [120, 480, 2], [360, 540, 2]],
+      path: [[240, 160], [120, 260], [360, 300], [120, 480], [360, 540], [240, 660]] },
+    { req: 6, par: 35, start: [60, 650], finish: [420, 170],
+      clusters: [[180, 560, 2], [300, 420, 2], [180, 280, 2], [330, 220, 2]],
+      path: [[60, 650], [180, 560], [300, 420], [180, 280], [330, 220], [420, 170]] },
+    { req: 8, par: 40, start: [60, 170], finish: [420, 650],
+      clusters: [[140, 220, 3], [340, 300, 3], [160, 480, 3], [320, 580, 2]],
+      path: [[60, 170], [140, 220], [340, 300], [160, 480], [320, 580], [420, 650]] },
+    { req: 8, par: 40, start: [240, 640], finish: [240, 160],
+      clusters: [[80, 520, 2], [400, 520, 2], [80, 260, 2], [400, 260, 2], [240, 400, 2]],
+      path: [[240, 640], [80, 520], [400, 520], [80, 260], [400, 260], [240, 160]] },
+    { req: 10, par: 45, start: [60, 170], finish: [420, 650],
+      clusters: [[120, 230, 3], [300, 280, 3], [170, 450, 3], [330, 550, 3]],
+      path: [[60, 170], [120, 230], [300, 280], [170, 450], [330, 550], [420, 650]] },
+    { req: 10, par: 45, start: [420, 170], finish: [60, 650],
+      clusters: [[350, 240, 3], [200, 340, 3], [320, 500, 3], [140, 580, 3]],
+      path: [[420, 170], [350, 240], [200, 340], [320, 500], [140, 580], [60, 650]] },
+    { req: 12, par: 50, start: [240, 170], finish: [240, 650],
+      clusters: [[100, 250, 3], [380, 280, 3], [100, 470, 3], [380, 500, 3], [240, 390, 3]],
+      path: [[240, 170], [100, 250], [380, 280], [100, 470], [380, 500], [240, 650]] },
+    { req: 12, par: 50, start: [60, 640], finish: [420, 170],
+      clusters: [[160, 560, 3], [320, 480, 3], [160, 330, 3], [330, 240, 3], [240, 410, 3]],
+      path: [[60, 640], [160, 560], [320, 480], [160, 330], [330, 240], [420, 170]] },
+    // ---- L11-20: obstacles ----
+    { req: 6, par: 35, start: [60, 170], finish: [420, 650],
+      blocks: [[200, 350, 80, 60]],
+      clusters: [[140, 240, 2], [340, 280, 2], [200, 520, 2], [330, 580, 2]],
+      path: [[60, 170], [140, 240], [340, 280], [340, 480], [200, 520], [330, 580], [420, 650]] },
+    { req: 7, par: 40, start: [60, 650], finish: [420, 170],
+      blocks: [[120, 300, 70, 50], [290, 420, 70, 50]],
+      clusters: [[150, 550, 2], [330, 500, 2], [160, 380, 2], [340, 250, 2]],
+      path: [[60, 650], [150, 550], [330, 500], [160, 380], [340, 250], [420, 170]] },
+    { req: 7, par: 40, start: [60, 170], finish: [420, 650],
+      spikes: [[240, 400, 30]],
+      clusters: [[140, 240, 2], [350, 300, 2], [150, 540, 2], [330, 580, 2]],
+      path: [[60, 170], [140, 240], [350, 300], [350, 520], [150, 540], [330, 580], [420, 650]] },
+    { req: 8, par: 40, start: [240, 170], finish: [240, 650],
+      spikes: [[150, 350, 28], [330, 480, 28]],
+      clusters: [[90, 260, 2], [390, 260, 2], [90, 540, 2], [390, 540, 2], [240, 400, 2]],
+      path: [[240, 170], [90, 260], [390, 260], [90, 540], [390, 540], [240, 650]] },
+    { req: 8, par: 45, start: [60, 170], finish: [420, 650],
+      wood: [[180, 320, 18], [290, 480, 18]], blocks: [[240, 380, 60, 40]],
+      clusters: [[140, 250, 2], [340, 300, 2], [160, 540, 2], [330, 600, 2]],
+      path: [[60, 170], [140, 250], [340, 300], [340, 480], [160, 540], [330, 600], [420, 650]] },
+    { req: 9, par: 45, start: [60, 650], finish: [420, 170],
+      spikes: [[120, 300, 26], [240, 470, 26], [360, 300, 26]],
+      clusters: [[100, 540, 3], [240, 380, 3], [380, 540, 3], [240, 230, 3]],
+      path: [[60, 650], [100, 540], [240, 380], [380, 540], [240, 230], [420, 170]] },
+    { req: 9, par: 45, start: [240, 170], finish: [240, 650],
+      blocks: [[16, 400, 170, 36], [294, 400, 170, 36]],
+      clusters: [[120, 260, 2], [360, 260, 2], [120, 540, 2], [360, 540, 2], [240, 470, 2]],
+      path: [[240, 170], [120, 260], [360, 260], [240, 360], [240, 470], [120, 540], [360, 540], [240, 650]] },
+    { req: 10, par: 50, start: [60, 170], finish: [420, 650],
+      spikes: [[210, 315, 30]], blocks: [[120, 480, 80, 50], [280, 480, 80, 50]],
+      clusters: [[140, 250, 2], [360, 250, 2], [240, 400, 2], [140, 590, 2], [360, 590, 2]],
+      path: [[60, 170], [140, 250], [360, 250], [240, 400], [240, 560], [140, 590], [360, 590], [420, 650]] },
+    { req: 10, par: 50, start: [60, 650], finish: [420, 170],
+      wood: [[120, 250, 18], [360, 550, 18], [240, 430, 18]],
+      spikes: [[190, 570, 26], [250, 280, 26]],
+      clusters: [[140, 540, 2], [340, 480, 2], [140, 380, 2], [340, 300, 2], [240, 200, 2]],
+      path: [[60, 650], [140, 540], [140, 470], [340, 480], [340, 380], [140, 380], [340, 300], [380, 220], [240, 200], [420, 170]] },
+    { req: 12, par: 55, start: [60, 170], finish: [420, 650],
+      blocks: [[100, 300, 60, 60], [320, 500, 60, 60]], spikes: [[240, 390, 28]],
+      wood: [[200, 580, 18], [280, 220, 18]],
+      clusters: [[130, 240, 3], [350, 280, 3], [120, 480, 3], [360, 580, 3], [240, 330, 3]],
+      path: [[60, 170], [130, 240], [350, 280], [380, 420], [120, 480], [360, 580], [420, 650]] },
+    // ---- L21-30: enemy magnets ----
+    { req: 7, par: 40, start: [60, 170], finish: [420, 650],
+      attractors: [[400, 300]],
+      clusters: [[140, 250, 2], [220, 380, 2], [150, 540, 2], [330, 600, 2], [360, 330, 2]],
+      path: [[60, 170], [140, 250], [220, 380], [150, 540], [330, 600], [420, 650]] },
+    { req: 8, par: 45, start: [420, 170], finish: [60, 650],
+      attractors: [[120, 450]],
+      clusters: [[340, 250, 2], [240, 380, 2], [340, 560, 2], [180, 600, 2], [150, 420, 2]],
+      path: [[420, 170], [340, 250], [240, 380], [340, 560], [180, 600], [60, 650]] },
+    { req: 8, par: 45, start: [60, 170], finish: [420, 650],
+      repellers: [[240, 400]],
+      clusters: [[140, 250, 2], [360, 280, 2], [150, 540, 2], [330, 580, 2], [240, 400, 3]],
+      path: [[60, 170], [140, 250], [360, 280], [150, 540], [330, 580], [420, 650]] },
+    { req: 9, par: 50, start: [60, 650], finish: [420, 170],
+      repellers: [[150, 350]], attractors: [[400, 420]],
+      clusters: [[130, 540, 2], [280, 600, 2], [240, 400, 2], [140, 260, 2], [350, 220, 2]],
+      path: [[60, 650], [130, 540], [280, 600], [240, 400], [140, 260], [350, 220], [420, 170]] },
+    { req: 9, par: 50, start: [240, 170], finish: [240, 650],
+      attractors: [[70, 330], [410, 580]],
+      clusters: [[240, 260, 3], [180, 500, 2], [330, 360, 2], [240, 580, 3]],
+      path: [[240, 170], [240, 260], [180, 500], [330, 360], [240, 580], [240, 650]] },
+    { req: 10, par: 55, start: [60, 170], finish: [420, 650],
+      attractors: [[70, 320], [420, 470]], repellers: [[240, 420]],
+      clusters: [[300, 240, 3], [170, 420, 3], [280, 440, 3], [180, 610, 3]],
+      path: [[60, 170], [240, 170], [300, 240], [170, 420], [280, 440], [180, 610], [420, 650]] },
+    { req: 10, par: 55, start: [60, 650], finish: [420, 170],
+      repellers: [[150, 300], [330, 520]], attractors: [[440, 330]],
+      clusters: [[140, 540, 3], [300, 480, 3], [160, 320, 3], [300, 220, 3]],
+      path: [[60, 650], [140, 540], [300, 480], [160, 320], [300, 220], [420, 170]] },
+    { req: 11, par: 60, start: [240, 170], finish: [240, 650],
+      attractors: [[240, 400]],
+      clusters: [[110, 230, 3], [370, 230, 3], [400, 570, 3], [110, 570, 3]],
+      path: [[240, 170], [110, 230], [370, 230], [400, 570], [110, 570], [240, 650]] },
+    { req: 11, par: 60, start: [60, 170], finish: [420, 650],
+      repellers: [[240, 300]], attractors: [[170, 590]],
+      spikes: [[120, 450, 26], [360, 450, 26]],
+      clusters: [[140, 250, 3], [360, 300, 3], [240, 450, 3], [360, 580, 3], [140, 620, 3]],
+      path: [[60, 170], [140, 250], [360, 300], [240, 450], [360, 580], [420, 650]] },
+    { req: 12, par: 60, start: [240, 650], finish: [240, 170],
+      attractors: [[110, 350], [120, 550]], repellers: [[240, 250]],
+      clusters: [[300, 560, 3], [400, 400, 3], [300, 260, 3], [150, 200, 3], [240, 420, 3]],
+      path: [[240, 650], [300, 560], [400, 400], [240, 420], [300, 260], [240, 170]] },
+    // ---- L31-40: gates & narrow paths ----
+    { req: 6, par: 40, start: [240, 170], finish: [240, 650],
+      blocks: [[16, 400, 184, 30], [280, 400, 184, 30]],
+      gates: [{ x: 200, y: 400, w: 80, h: 30, kind: 'pieces' }],
+      clusters: [[120, 250, 3], [360, 250, 3], [120, 550, 2], [360, 550, 2]],
+      path: [[240, 170], [120, 250], [360, 250], [240, 400], [240, 650]] },
+    { req: 7, par: 45, start: [240, 170], finish: [240, 650],
+      blocks: [[16, 400, 184, 30], [280, 400, 184, 30]],
+      gates: [{ x: 200, y: 400, w: 80, h: 30, kind: 'key', keyIdx: 0 }],
+      keys: [[360, 250]],
+      clusters: [[120, 250, 3], [360, 250, 2], [120, 550, 2], [360, 550, 2]],
+      path: [[240, 170], [120, 250], [360, 250], [240, 400], [120, 550], [360, 550], [240, 650]] },
+    { req: 8, par: 50, start: [240, 170], finish: [240, 650],
+      blocks: [[16, 400, 184, 30], [280, 400, 184, 30]],
+      gates: [{ x: 200, y: 400, w: 80, h: 30, kind: 'moving', period: 4, openFor: 2, phase: 0 }],
+      clusters: [[120, 250, 3], [360, 250, 3], [120, 550, 2], [360, 550, 2]],
+      path: [[240, 170], [120, 250], [360, 250], [240, 360], [240, 470], [120, 550], [360, 550], [240, 650]] },
+    { req: 8, par: 50, start: [60, 170], finish: [420, 650],
+      blocks: [[16, 300, 84, 30], [170, 300, 294, 30], [16, 520, 294, 30], [380, 520, 84, 30]],
+      gates: [{ x: 100, y: 300, w: 70, h: 30, kind: 'moving', period: 5, openFor: 2.5, phase: 0 },
+              { x: 310, y: 520, w: 70, h: 30, kind: 'moving', period: 5, openFor: 2.5, phase: 2.5 }],
+      clusters: [[200, 220, 3], [380, 220, 2], [150, 420, 3], [350, 420, 2], [240, 620, 2]],
+      path: [[60, 170], [200, 220], [380, 220], [135, 300], [150, 420], [350, 420], [345, 520], [240, 620], [420, 650]] },
+    { req: 9, par: 55, start: [60, 170], finish: [420, 650],
+      blocks: [[16, 250, 300, 40], [164, 500, 300, 40]],
+      clusters: [[150, 200, 3], [400, 380, 3], [100, 420, 3], [300, 600, 3]],
+      path: [[60, 170], [150, 200], [400, 380], [100, 420], [100, 560], [300, 600], [420, 650]] },
+    { req: 9, par: 55, start: [60, 170], finish: [420, 650],
+      blocks: [[16, 350, 104, 30], [190, 350, 274, 30], [16, 550, 274, 30], [360, 550, 104, 30]],
+      gates: [{ x: 120, y: 350, w: 70, h: 30, kind: 'key', keyIdx: 0 },
+              { x: 290, y: 550, w: 70, h: 30, kind: 'moving', period: 4, openFor: 2, phase: 0 }],
+      keys: [[380, 220]],
+      clusters: [[150, 240, 3], [380, 220, 2], [150, 470, 3], [380, 470, 2], [240, 630, 2]],
+      path: [[60, 170], [150, 240], [380, 220], [155, 350], [150, 470], [380, 470], [325, 550], [240, 630], [420, 650]] },
+    { req: 10, par: 60, start: [60, 170], finish: [420, 650],
+      blocks: [[16, 300, 280, 36], [184, 480, 280, 36]],
+      spikes: [[430, 420, 26], [70, 590, 26]],
+      clusters: [[150, 220, 3], [380, 380, 3], [120, 400, 3], [300, 600, 3]],
+      path: [[60, 170], [150, 220], [340, 250], [380, 380], [120, 400], [120, 560], [300, 600], [420, 650]] },
+    { req: 10, par: 60, start: [240, 170], finish: [60, 650],
+      blocks: [[16, 400, 184, 30], [280, 400, 184, 30]],
+      gates: [{ x: 200, y: 400, w: 80, h: 30, kind: 'pieces', openAt: 6 }],
+      attractors: [[380, 550]],
+      clusters: [[120, 250, 3], [360, 250, 3], [240, 470, 2], [120, 550, 3], [380, 550, 2]],
+      path: [[240, 170], [120, 250], [360, 250], [240, 400], [240, 470], [120, 550], [60, 650]] },
+    { req: 11, par: 65, start: [60, 170], finish: [420, 650],
+      blocks: [[16, 300, 84, 30], [170, 300, 294, 30], [16, 520, 294, 30], [380, 520, 84, 30]],
+      gates: [{ x: 100, y: 300, w: 70, h: 30, kind: 'key', keyIdx: 0 },
+              { x: 310, y: 520, w: 70, h: 30, kind: 'key', keyIdx: 1 }],
+      keys: [[380, 200], [120, 420]],
+      clusters: [[200, 220, 2], [380, 200, 2], [120, 420, 2], [350, 430, 3], [240, 620, 3]],
+      path: [[60, 170], [200, 220], [380, 200], [135, 300], [120, 420], [350, 430], [345, 520], [240, 620], [420, 650]] },
+    { req: 12, par: 65, start: [240, 170], finish: [240, 650],
+      blocks: [[16, 350, 184, 30], [280, 350, 184, 30], [16, 550, 184, 30], [280, 550, 184, 30]],
+      gates: [{ x: 200, y: 350, w: 80, h: 30, kind: 'moving', period: 4, openFor: 2, phase: 0 },
+              { x: 200, y: 550, w: 80, h: 30, kind: 'moving', period: 4, openFor: 2, phase: 2 }],
+      repellers: [[240, 450]],
+      clusters: [[120, 250, 3], [360, 250, 3], [120, 470, 3], [360, 470, 3], [240, 620, 2]],
+      path: [[240, 170], [120, 250], [360, 250], [240, 350], [120, 470], [360, 470], [240, 550], [240, 620], [240, 650]] },
+    // ---- L41-45: master challenges (timed + moving spikes) ----
+    { req: 8, par: 45, time: 75, start: [60, 170], finish: [420, 650],
+      spikes: [{ x: 240, y: 400, r: 28, dx: 1, dy: 0, range: 120, speed: 0.9 }],
+      clusters: [[140, 250, 2], [360, 280, 2], [150, 540, 2], [330, 580, 2]],
+      path: [[60, 170], [140, 250], [360, 280], [150, 540], [330, 580], [420, 650]] },
+    { req: 9, par: 50, time: 80, start: [60, 650], finish: [420, 170],
+      spikes: [{ x: 150, y: 350, r: 26, dx: 0, dy: 1, range: 80, speed: 1.0 },
+               { x: 330, y: 500, r: 26, dx: 1, dy: 0, range: 90, speed: 1.2 }],
+      clusters: [[140, 540, 3], [320, 580, 3], [200, 280, 3], [340, 240, 3]],
+      path: [[60, 650], [140, 540], [320, 580], [200, 280], [340, 240], [420, 170]] },
+    { req: 10, par: 55, time: 90, start: [240, 170], finish: [420, 650],
+      blocks: [[16, 400, 184, 30], [280, 400, 184, 30]],
+      gates: [{ x: 200, y: 400, w: 80, h: 30, kind: 'moving', period: 5, openFor: 2.5, phase: 0 }],
+      spikes: [{ x: 240, y: 550, r: 26, dx: 1, dy: 0, range: 130, speed: 1.0 }],
+      clusters: [[120, 250, 3], [360, 250, 3], [140, 500, 2], [340, 600, 2]],
+      path: [[240, 170], [120, 250], [360, 250], [240, 360], [240, 470], [140, 500], [340, 600], [420, 650]] },
+    { req: 11, par: 60, time: 90, start: [60, 650], finish: [420, 170],
+      attractors: [[120, 300]], repellers: [[360, 500]],
+      spikes: [{ x: 240, y: 420, r: 26, dx: 0, dy: 1, range: 90, speed: 1.1 }],
+      clusters: [[150, 550, 3], [330, 580, 3], [330, 300, 3], [220, 200, 3], [150, 400, 3]],
+      path: [[60, 650], [150, 550], [330, 580], [330, 300], [220, 200], [420, 170]] },
+    { req: 12, par: 70, time: 100, start: [240, 170], finish: [420, 650],
+      blocks: [[16, 330, 184, 30], [280, 330, 184, 30]],
+      gates: [{ x: 200, y: 330, w: 80, h: 30, kind: 'pieces', openAt: 6 }],
+      spikes: [{ x: 240, y: 500, r: 28, dx: 1, dy: 0, range: 140, speed: 1.0 }],
+      attractors: [[380, 480]], repellers: [[120, 480]],
+      clusters: [[120, 240, 3], [360, 240, 3], [140, 420, 3], [260, 560, 3], [200, 620, 2]],
+      path: [[240, 170], [120, 240], [360, 240], [240, 330], [140, 420], [260, 560], [200, 620], [420, 650]] }
+  ];
+
+  // Daily challenge templates: one per weekday slot, picked by date seed.
+  var DAILY_TEMPLATES = [
+    { req: 6, par: 40, start: [60, 170], finish: [420, 650],
+      clusters: [[140, 250, 2], [340, 320, 2], [180, 540, 2], [330, 580, 2]],
+      path: [[60, 170], [140, 250], [340, 320], [180, 540], [330, 580], [420, 650]] },
+    { req: 8, par: 45, start: [240, 170], finish: [240, 650],
+      spikes: [[240, 400, 28]],
+      clusters: [[120, 260, 3], [360, 260, 3], [120, 540, 3], [360, 540, 3]],
+      path: [[240, 170], [120, 260], [360, 260], [360, 540], [120, 540], [240, 650]] },
+    { req: 7, par: 45, start: [60, 650], finish: [420, 170],
+      attractors: [[440, 400]],
+      clusters: [[150, 540, 2], [320, 500, 2], [150, 300, 2], [340, 220, 2]],
+      path: [[60, 650], [150, 540], [320, 500], [150, 300], [340, 220], [420, 170]] },
+    { req: 9, par: 50, time: 80, start: [240, 170], finish: [240, 650],
+      blocks: [[16, 400, 170, 36], [294, 400, 170, 36]],
+      clusters: [[120, 260, 3], [360, 260, 3], [120, 540, 3], [360, 540, 3]],
+      path: [[240, 170], [120, 260], [360, 260], [240, 400], [120, 540], [360, 540], [240, 650]] },
+    { req: 10, par: 55, start: [60, 170], finish: [420, 650],
+      repellers: [[240, 400]], spikes: [[120, 300, 26], [400, 520, 26]],
+      clusters: [[140, 250, 3], [360, 280, 3], [150, 540, 3], [330, 580, 3]],
+      path: [[60, 170], [140, 250], [360, 280], [150, 540], [330, 580], [420, 650]] }
+  ];
+
+  var PIECE_TYPES = ['screw', 'nail', 'bolt', 'nut', 'gear', 'coin'];
+
+  // ============================== Level runtime ==============================
+  var levelDef = null;
+  var levelIndex = 0;      // 0-based main level; -1 for daily
+  var isDaily = false;
+  var magnet = { x: 0, y: 0, vx: 0, vy: 0, squash: 0 };
+  var pointer = { down: false, x: 0, y: 0 };
+  var pieces = [];         // {x,y,vx,vy,type,state,slot,scatterT,stealBy,orbitA}
+  var spikes = [];         // {x0,y0,x,y,r,dx,dy,range,speed,moving}
+  var blocks = [];         // {x,y,w,h}
+  var woods = [];          // {x,y,r}
+  var attractors = [];     // {x,y}
+  var repellers = [];      // {x,y}
+  var gates = [];          // {x,y,w,h,kind,openAt,keyIdx,period,openFor,phase,open,wasOpen,anim}
+  var keyPieces = [];      // {x,y,taken} — keyIdx indexes this array
+  var collected = 0;       // currently attached pieces
+  var totalInLevel = 0;
+  var gateOpen = false;    // finish gate
+  var gateOpenT = 0;       // finish-gate open animation timer
+  var knockoffs = 0;       // pieces lost to spikes + attractor steals
+  var immunity = 0;        // seconds of spike immunity after a knock-off
+  var levelTime = 0;
+  var phase = 'play';      // 'play' | 'complete' | 'failed'
+  var completeT = 0;
+  var hasDragged = false;
+  var shake = 0;
+  var particles = [];
+  var floaters = [];       // {x,y,text,color,t}
+  var confetti = [];
+  var lastStars = 0, lastCoins = 0, lastTimeBonus = 0, lastIsNewBest = false;
+  var lastDailyReward = 0;
+  var nextSlot = 0;
+  var trailT = 0;
+  var whooshT = 0;
+
+  function slotOffset(slot) {
+    // Golden-angle spiral ring around the magnet.
+    var ring = Math.floor(slot / 7);
+    var r = 36 + ring * 12;
+    var a = slot * 2.39996;
+    return { x: Math.cos(a) * r, y: Math.sin(a) * r };
+  }
+
+  function loadLevel(idx, daily) {
+    isDaily = !!daily;
+    levelIndex = daily ? -1 : idx;
+    levelDef = daily ? dailyDef() : LEVELS[idx];
+    var def = levelDef;
+    pieces = []; spikes = []; blocks = []; woods = [];
+    attractors = []; repellers = []; gates = []; keyPieces = [];
+    particles = []; floaters = []; confetti = [];
+    var pc = 0;
+    var ci, i, j;
+    for (ci = 0; ci < (def.clusters || []).length; ci++) {
+      var cl = def.clusters[ci];
+      for (j = 0; j < cl[2]; j++) {
+        var r = 8 + 11 * Math.sqrt(j);
+        var a = j * 2.39996;
+        pieces.push({
+          x: cl[0] + Math.cos(a) * r, y: cl[1] + Math.sin(a) * r,
+          vx: 0, vy: 0, type: PIECE_TYPES[pc % PIECE_TYPES.length],
+          state: 'free', slot: -1, scatterT: 0, stealBy: null, orbitA: 0
+        });
+        pc++;
+      }
+    }
+    for (i = 0; i < (def.keys || []).length; i++) {
+      keyPieces.push({ x: def.keys[i][0], y: def.keys[i][1], taken: false });
+      pieces.push({
+        x: def.keys[i][0], y: def.keys[i][1], vx: 0, vy: 0,
+        type: 'key', state: 'free', slot: -1, scatterT: 0,
+        stealBy: null, orbitA: 0, keyIdx: i
+      });
+      pc++;
+    }
+    totalInLevel = pieces.length;
+    for (i = 0; i < (def.blocks || []).length; i++) {
+      blocks.push({ x: def.blocks[i][0], y: def.blocks[i][1], w: def.blocks[i][2], h: def.blocks[i][3] });
+    }
+    for (i = 0; i < (def.wood || []).length; i++) {
+      woods.push({ x: def.wood[i][0], y: def.wood[i][1], r: def.wood[i][2] });
+    }
+    for (i = 0; i < (def.spikes || []).length; i++) {
+      var sp = def.spikes[i];
+      if (Array.isArray(sp)) {
+        spikes.push({ x0: sp[0], y0: sp[1], x: sp[0], y: sp[1], r: sp[2], moving: false });
+      } else {
+        spikes.push({ x0: sp.x, y0: sp.y, x: sp.x, y: sp.y, r: sp.r,
+                      dx: sp.dx, dy: sp.dy, range: sp.range, speed: sp.speed, moving: true });
+      }
+    }
+    for (i = 0; i < (def.attractors || []).length; i++) {
+      attractors.push({ x: def.attractors[i][0], y: def.attractors[i][1] });
+    }
+    for (i = 0; i < (def.repellers || []).length; i++) {
+      repellers.push({ x: def.repellers[i][0], y: def.repellers[i][1] });
+    }
+    for (i = 0; i < (def.gates || []).length; i++) {
+      var g = def.gates[i];
+      gates.push({ x: g.x, y: g.y, w: g.w, h: g.h, kind: g.kind,
+                   openAt: g.openAt || def.req, keyIdx: g.keyIdx || 0,
+                   period: g.period || 4, openFor: g.openFor || 2, phase: g.phase || 0,
+                   open: false, wasOpen: false, anim: 0 });
+    }
+    magnet.x = def.start[0]; magnet.y = def.start[1];
+    magnet.vx = 0; magnet.vy = 0; magnet.squash = 0;
+    pointer.x = def.start[0]; pointer.y = def.start[1]; pointer.down = false;
+    collected = 0; knockoffs = 0; immunity = 0;
+    levelTime = 0; phase = 'play'; panel = null; completeT = 0;
+    hasDragged = false; shake = 0; nextSlot = 0;
+    gateOpen = false; gateOpenT = 0;
+    lastStars = 0; lastCoins = 0; lastTimeBonus = 0; lastIsNewBest = false;
+    lastDailyReward = 0;
+    // FTUE: level 1 is guided on a fresh save (or on "?" replay).
+    tutorialJustDone = false;
+    tutorialActive = (!isDaily && idx === 0 && (!tutorialDone || tutorialReplay));
+    tutorialReplay = false;
+    tutT = 0; tutLastPhase = null;
+    state = 'playing';
+    AudioSys.setMusicMode('level');
+    Bridge.send('level_started');
+  }
+
+  function attachPiece(p) {
+    p.state = 'attached';
+    p.slot = nextSlot++;
+    p.stealBy = null;
+    p.vx = 0; p.vy = 0;
+    collected++;
+    totalPieces++;
+    if (p.type === 'key' && p.keyIdx !== undefined) keyPieces[p.keyIdx].taken = true;
+    magnet.squash = 1;
+    spawnBurst(p.x, p.y, '#ffd76a', 8);
+    spawnRing(p.x, p.y, '#ffd76a');
+    AudioSys.clink();
+  }
+
+  function detachPiece(p, reason) {
+    // reason: 'spike' | 'steal' — both count as knock-offs for stars.
+    p.state = 'free';
+    p.slot = -1;
+    p.stealBy = null;
+    collected = Math.max(0, collected - 1);
+    knockoffs++;
+    if (reason === 'steal') {
+      p.state = 'stolen';
+      p.orbitA = Math.random() * Math.PI * 2;
+    }
+  }
+
+  // ---- Particles ----
+  function spawnBurst(x, y, color, n) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2;
+      var sp = 60 + Math.random() * 160;
+      particles.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                       life: 0, maxLife: 0.4 + Math.random() * 0.3,
+                       size: 2 + Math.random() * 3, color: color, type: 'spark' });
+    }
+    if (particles.length > 220) particles.splice(0, particles.length - 220);
+  }
+  function spawnRing(x, y, color) {
+    particles.push({ x: x, y: y, vx: 0, vy: 0, life: 0, maxLife: 0.35,
+                     size: 6, color: color, type: 'ring' });
+  }
+  function spawnTrail(x, y, color) {
+    particles.push({ x: x, y: y, vx: 0, vy: 0, life: 0, maxLife: 0.3,
+                     size: 3 + Math.random() * 2, color: color, type: 'trail' });
+  }
+  function spawnFloater(x, y, text, color) {
+    floaters.push({ x: x, y: y, text: text, color: color, t: 0 });
+    if (floaters.length > 8) floaters.shift();
+  }
+  function spawnConfetti() {
+    var colors = ['#ffd700', '#ff6b6b', '#4ecdc4', '#a855f7', '#38bdf8', '#f97316'];
+    for (var i = 0; i < 90; i++) {
+      confetti.push({ x: 40 + Math.random() * 400, y: -20 - Math.random() * 200,
+                      vx: rand(-30, 30), vy: rand(120, 260), rot: Math.random() * Math.PI,
+                      vr: rand(-6, 6), color: colors[i % colors.length],
+                      size: 5 + Math.random() * 5, life: 0 });
+    }
+  }
+
+  // ---- Collision helpers ----
+  function circleRectResolve(px, py, r, rect) {
+    // Returns corrected {x, y} pushing the circle out of the rect.
+    var cx = clamp(px, rect.x, rect.x + rect.w);
+    var cy = clamp(py, rect.y, rect.y + rect.h);
+    var dx = px - cx, dy = py - cy;
+    var d2 = dx * dx + dy * dy;
+    if (d2 >= r * r) return { x: px, y: py };
+    if (d2 > 0.0001) {
+      var d = Math.sqrt(d2);
+      var push = (r - d) / d;
+      return { x: px + dx * push, y: py + dy * push };
+    }
+    // Center inside the rect: push out along the smallest penetration.
+    var left = px - rect.x, right = rect.x + rect.w - px;
+    var top = py - rect.y, bottom = rect.y + rect.h - py;
+    var m = Math.min(left, right, top, bottom);
+    if (m === left) return { x: rect.x - r, y: py };
+    if (m === right) return { x: rect.x + rect.w + r, y: py };
+    if (m === top) return { x: px, y: rect.y - r };
+    return { x: px, y: rect.y + rect.h + r };
+  }
+  function collideWorld(x, y, r) {
+    // Arena bounds + blockers + closed gates + wood decoys.
+    x = clamp(x, ARENA.x + r, ARENA.x + ARENA.w - r);
+    y = clamp(y, ARENA.y + r, ARENA.y + ARENA.h - r);
+    var i, res;
+    for (i = 0; i < blocks.length; i++) {
+      res = circleRectResolve(x, y, r, blocks[i]);
+      x = res.x; y = res.y;
+    }
+    for (i = 0; i < gates.length; i++) {
+      if (gates[i].open) continue;
+      // Fairness grace: a moving gate closing on the magnet must not
+      // shove it back — if the magnet's centre is already inside the
+      // doorway, let it slide through. (The centre can only get inside
+      // while the gate was open; circle collision keeps it out when
+      // approaching from outside.)
+      var g = gates[i];
+      if (g.kind === 'moving' && x > g.x && x < g.x + g.w && y > g.y && y < g.y + g.h) continue;
+      res = circleRectResolve(x, y, r, gates[i]);
+      x = res.x; y = res.y;
+    }
+    for (i = 0; i < woods.length; i++) {
+      var w = woods[i];
+      var d = dist(x, y, w.x, w.y);
+      var min = r + w.r;
+      if (d < min && d > 0.001) {
+        x = w.x + (x - w.x) / d * min;
+        y = w.y + (y - w.y) / d * min;
+      }
+    }
+    return { x: x, y: y };
+  }
+
+  // ---- Per-frame physics ----
+  function updatePlaying(dt) {
+    if (phase !== 'play') {
+      if (phase === 'complete') completeT += dt;
+      updateFx(dt);
+      return;
+    }
+    levelTime += dt;
+    if (immunity > 0) immunity -= dt;
+    if (magnet.squash > 0) magnet.squash = Math.max(0, magnet.squash - dt * 4);
+
+    // Timed levels.
+    if (levelDef.time) {
+      var left = levelDef.time - levelTime;
+      if (left <= 10) AudioSys.setMusicMode('tense');
+      else AudioSys.setMusicMode('level');
+      if (left <= 0) { failLevel(); return; }
+    }
+
+    // Moving spikes.
+    for (var si = 0; si < spikes.length; si++) {
+      var sp = spikes[si];
+      if (sp.moving) {
+        var off = Math.sin(levelTime * sp.speed) * sp.range;
+        sp.x = sp.x0 + sp.dx * off;
+        sp.y = sp.y0 + sp.dy * off;
+      }
+    }
+
+    // Gates.
+    for (var gi = 0; gi < gates.length; gi++) {
+      var g = gates[gi];
+      var wasOpen = g.open;
+      if (g.kind === 'pieces') g.open = collected >= g.openAt;
+      else if (g.kind === 'key') g.open = !!(keyPieces[g.keyIdx] && keyPieces[g.keyIdx].taken);
+      else g.open = ((levelTime + g.phase) % g.period) < g.openFor;
+      g.anim = clamp(g.anim + (g.open ? dt * 4 : -dt * 4), 0, 1);
+      if (g.open && !wasOpen && g.kind !== 'moving') {
+        AudioSys.gateOpen();
+        spawnBurst(g.x + g.w / 2, g.y + g.h / 2, '#7CFC00', 14);
+      }
+    }
+
+    // Finish gate.
+    if (!gateOpen && collected >= levelDef.req) {
+      gateOpen = true;
+      gateOpenT = 0;
+      AudioSys.gateOpen();
+      showToast(t('gateOpen'));
+      spawnBurst(levelDef.finish[0], levelDef.finish[1], '#7CFC00', 20);
+      spawnRing(levelDef.finish[0], levelDef.finish[1], '#7CFC00');
+    }
+    if (gateOpen) gateOpenT += dt;
+
+    // Magnet follow: spring toward the pointer, repellers push back.
+    var md = magnetDef(selectedMagnet);
+    var pullR = md.pullR;
+    var tx = pointer.down ? pointer.x : magnet.x;
+    var ty = pointer.down ? pointer.y : magnet.y;
+    var dvx = (tx - magnet.x) * 16;
+    var dvy = (ty - magnet.y) * 16;
+    var dv = Math.sqrt(dvx * dvx + dvy * dvy);
+    if (dv > 1000) { dvx = dvx / dv * 1000; dvy = dvy / dv * 1000; }
+    for (var ri = 0; ri < repellers.length; ri++) {
+      var rp = repellers[ri];
+      var rd = dist(magnet.x, magnet.y, rp.x, rp.y);
+      if (rd < REPELLER_R && rd > 0.01) {
+        var fall = 1 - rd / REPELLER_R;
+        dvx += (magnet.x - rp.x) / rd * 250 * fall;
+        dvy += (magnet.y - rp.y) / rd * 250 * fall;
+        if (time - whooshT > 1.2) { whooshT = time; AudioSys.whoosh(); }
+      }
+    }
+    var k = 1 - Math.exp(-20 * dt);
+    magnet.vx += (dvx - magnet.vx) * k;
+    magnet.vy += (dvy - magnet.vy) * k;
+    magnet.x += magnet.vx * dt;
+    magnet.y += magnet.vy * dt;
+    var mc = collideWorld(magnet.x, magnet.y, MAGNET_R);
+    magnet.x = mc.x; magnet.y = mc.y;
+
+    // Drag trail + hum.
+    if (pointer.down) {
+      trailT -= dt;
+      if (trailT <= 0) {
+        trailT = 0.05;
+        spawnTrail(magnet.x + rand(-8, 8), magnet.y + rand(-8, 8), skinDef(selectedSkin).glow);
+      }
+      AudioSys.startHum();
+    } else {
+      AudioSys.stopHum();
+    }
+
+    // Spike knock-off.
+    if (immunity <= 0) {
+      for (var ski = 0; ski < spikes.length; ski++) {
+        var sk = spikes[ski];
+        if (dist(magnet.x, magnet.y, sk.x, sk.y) < sk.r + 11) {
+          knockOffPieces(2, sk.x, sk.y);
+          break;
+        }
+      }
+    }
+
+    // Pieces.
+    updatePieces(dt, md, pullR);
+
+    // Finish.
+    if (gateOpen && dist(magnet.x, magnet.y, levelDef.finish[0], levelDef.finish[1]) < FINISH_R) {
+      completeLevel();
+      return;
+    }
+
+    updateFx(dt);
+  }
+
+  function knockOffPieces(n, sx, sy) {
+    var knocked = 0;
+    for (var i = pieces.length - 1; i >= 0 && knocked < n; i--) {
+      var p = pieces[i];
+      if (p.state !== 'attached') continue;
+      p.state = 'free';
+      p.slot = -1;
+      p.scatterT = 1.2;
+      var a = Math.atan2(p.y - sy, p.x - sx) + rand(-0.6, 0.6);
+      var sp = rand(280, 420);
+      p.vx = Math.cos(a) * sp;
+      p.vy = Math.sin(a) * sp;
+      collected = Math.max(0, collected - 1);
+      knockoffs++;
+      knocked++;
+      spawnBurst(p.x, p.y, '#ff5555', 6);
+    }
+    if (knocked > 0) {
+      immunity = 1.2;
+      shake = 9;
+      AudioSys.knockoff();
+      spawnFloater(magnet.x, magnet.y - 40, '-' + knocked, '#ff5555');
+    }
+  }
+
+  function updatePieces(dt, md, pullR) {
+    var i, p;
+    // Attractor steal: each attractor pulls the nearest attached piece.
+    for (var ai = 0; ai < attractors.length; ai++) {
+      var at = attractors[ai];
+      var mdAt = dist(magnet.x, magnet.y, at.x, at.y);
+      if (mdAt > ATTRACTOR_R) continue;
+      var best = null, bestD = 1e9;
+      for (i = 0; i < pieces.length; i++) {
+        p = pieces[i];
+        if (p.state !== 'attached') continue;
+        var d = dist(p.x, p.y, at.x, at.y);
+        if (d < bestD) { bestD = d; best = p; }
+      }
+      if (best) {
+        best.state = 'stealing';
+        best.stealBy = at;
+      }
+    }
+    for (i = 0; i < pieces.length; i++) {
+      p = pieces[i];
+      if (p.state === 'free') {
+        if (p.scatterT > 0) {
+          p.scatterT -= dt;
+        } else {
+          var d = dist(p.x, p.y, magnet.x, magnet.y);
+          if (d < pullR) {
+            var a = 1700 * md.pull * (1 - 0.4 * d / pullR);
+            p.vx += (magnet.x - p.x) / Math.max(1, d) * a * dt;
+            p.vy += (magnet.y - p.y) / Math.max(1, d) * a * dt;
+            var sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            if (sp > 620) { p.vx = p.vx / sp * 620; p.vy = p.vy / sp * 620; }
+          }
+        }
+        var drag = Math.exp(-1.2 * dt);
+        p.vx *= drag; p.vy *= drag;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        var pc = collideWorld(p.x, p.y, PIECE_R);
+        p.x = pc.x; p.y = pc.y;
+        if (p.scatterT <= 0 && dist(p.x, p.y, magnet.x, magnet.y) < 36) {
+          attachPiece(p);
+        }
+      } else if (p.state === 'attached') {
+        var off = slotOffset(p.slot);
+        var wob = Math.sin(time * 3 + p.slot * 1.7) * 2;
+        var tx = magnet.x + off.x + wob;
+        var ty = magnet.y + off.y + wob * 0.5;
+        p.vx += ((tx - p.x) * 60 - p.vx * 12) * dt;
+        p.vy += ((ty - p.y) * 60 - p.vy * 12) * dt;
+        var sp2 = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+        if (sp2 > 900) { p.vx = p.vx / sp2 * 900; p.vy = p.vy / sp2 * 900; }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      } else if (p.state === 'stealing') {
+        var at2 = p.stealBy;
+        if (!at2 || dist(magnet.x, magnet.y, at2.x, at2.y) > ATTRACTOR_R + 20) {
+          // Escaped the attractor's reach — the piece springs back.
+          p.state = 'attached';
+          p.stealBy = null;
+        } else {
+          var d2 = dist(p.x, p.y, at2.x, at2.y);
+          if (d2 < 30) {
+            detachPiece(p, 'steal');
+            AudioSys.steal();
+            spawnBurst(p.x, p.y, '#38bdf8', 8);
+            spawnFloater(p.x, p.y - 20, '!', '#38bdf8');
+          } else {
+            p.x += (at2.x - p.x) / d2 * 280 * dt;
+            p.y += (at2.y - p.y) / d2 * 280 * dt;
+          }
+        }
+      } else if (p.state === 'stolen') {
+        // Orbit the attractor that stole it; the player can re-steal it
+        // by bringing the magnet close (it becomes free and flies back).
+        var at3 = p.stealBy;
+        if (!at3) { p.state = 'free'; continue; }
+        p.orbitA += dt * 1.2;
+        p.x = at3.x + Math.cos(p.orbitA) * 36;
+        p.y = at3.y + Math.sin(p.orbitA) * 36;
+        if (dist(p.x, p.y, magnet.x, magnet.y) < pullR) {
+          p.state = 'free';
+          p.stealBy = null;
+          p.vx = (magnet.x - p.x) * 2;
+          p.vy = (magnet.y - p.y) * 2;
+        }
+      }
+    }
+  }
+
+  function updateFx(dt) {
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var pt = particles[i];
+      pt.life += dt;
+      if (pt.life >= pt.maxLife) { particles.splice(i, 1); continue; }
+      pt.x += pt.vx * dt;
+      pt.y += pt.vy * dt;
+      pt.vy += (pt.type === 'spark' ? 300 : 0) * dt;
+    }
+    for (var j = floaters.length - 1; j >= 0; j--) {
+      floaters[j].t += dt;
+      floaters[j].y -= 30 * dt;
+      if (floaters[j].t > 1.1) floaters.splice(j, 1);
+    }
+    for (var k = confetti.length - 1; k >= 0; k--) {
+      var cf = confetti[k];
+      cf.life += dt;
+      cf.x += cf.vx * dt;
+      cf.y += cf.vy * dt;
+      cf.rot += cf.vr * dt;
+      if (cf.y > H + 20 || cf.life > 4) confetti.splice(k, 1);
+    }
+    if (shake > 0) shake *= Math.exp(-6 * dt);
+    if (shake < 0.2) shake = 0;
+  }
+
+  // ============================== Tutorial (FTUE) ==============================
+  // Level 1 is guided on a fresh save: the phase is derived from live game
+  // state (never a blocking script), the correct action advances it
+  // immediately, and SKIP is always visible.
+  function tutorialPhase() {
+    if (!tutorialActive || panel) return null;
+    if (!hasDragged && collected === 0) return 'drag';
+    if (collected < levelDef.req) return 'collect';
+    if (gateOpen) return 'finish';
+    return 'collect';
+  }
+  function tutorialSkip() {
+    if (!tutorialActive) return;
+    tutorialDone = true;
+    tutorialActive = false;
+    Bridge.saveProgress('tutorial', '1');
+    AudioSys.click();
+  }
+  function tutorialComplete() {
+    if (!tutorialActive) return;
+    tutorialDone = true;
+    tutorialActive = false;
+    tutorialJustDone = true;
+    Bridge.saveProgress('tutorial', '1');
+  }
+
+  // ============================== Daily challenge ==============================
+  function dailyKey(date) {
+    var d = date || new Date();
+    var m = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+  function dailySeed() {
+    var d = new Date();
+    return d.getFullYear() * 372 + (d.getMonth() + 1) * 31 + d.getDate();
+  }
+  function dailyDef() {
+    return DAILY_TEMPLATES[dailySeed() % DAILY_TEMPLATES.length];
+  }
+  function dailyAvailable() {
+    return lastDaily !== dailyKey();
+  }
+  function dailyCountdown() {
+    var now = new Date();
+    var midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+    var s = Math.max(0, Math.floor((midnight - now) / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
+  }
+
+  // ============================== Level end ==============================
+  function completeLevel() {
+    phase = 'complete';
+    completeT = 0;
+    panel = 'complete';
+    AudioSys.stopHum();
+    if (isDaily) {
+      lastStars = 0;
+      lastTimeBonus = 0;
+      lastIsNewBest = false;
+      if (dailyAvailable()) {
+        lastDailyReward = 200;
+        lastCoins = 200;
+        coins += 200;
+        lastDaily = dailyKey();
+        Bridge.saveProgress('lastDaily', lastDaily);
+        Bridge.saveProgress('coins', coins);
+      } else {
+        lastDailyReward = 0;
+        lastCoins = 0;
+      }
+      levelsCompleted++;
+      Bridge.saveProgress('levelsCompleted', levelsCompleted);
+      Bridge.saveProgress('totalPieces', totalPieces);
+      AudioSys.win();
+      AudioSys.coin();
+      if (levelsCompleted % 3 === 0) Bridge.showInterstitial();
+      Bridge.send('level_completed');
+      checkMissions();
+      return;
+    }
+    var s = 1;
+    if (knockoffs === 0) s = 2;
+    if (knockoffs === 0 && levelTime <= levelDef.par) s = 3;
+    lastStars = s;
+    var prev = stars[levelIndex] || 0;
+    lastIsNewBest = s > prev;
+    stars[levelIndex] = Math.max(prev, s);
+    var timeBonus = levelTime <= levelDef.par ? 50 : Math.max(0, 50 - Math.floor((levelTime - levelDef.par) * 2));
+    lastTimeBonus = timeBonus;
+    var total = 100 + 25 * s + timeBonus;
+    var md = magnetDef(selectedMagnet);
+    if (md.coinBonus) total = Math.round(total * (1 + md.coinBonus));
+    lastCoins = total;
+    coins += total;
+    unlocked = Math.max(unlocked, Math.min(TOTAL_LEVELS, levelIndex + 2));
+    levelsCompleted++;
+    Bridge.saveProgress('stars', stars);
+    Bridge.saveProgress('coins', coins);
+    Bridge.saveProgress('unlocked', unlocked);
+    Bridge.saveProgress('levelsCompleted', levelsCompleted);
+    Bridge.saveProgress('totalPieces', totalPieces);
+    if (tutorialActive) tutorialComplete();
+    AudioSys.win();
+    AudioSys.coin();
+    if (s === 3) spawnConfetti();
+    if (levelsCompleted % 3 === 0) Bridge.showInterstitial();
+    Bridge.send('level_completed');
+    checkMissions();
+  }
+
+  function failLevel() {
+    phase = 'failed';
+    panel = 'failed';
+    AudioSys.stopHum();
+    AudioSys.fail();
+    Bridge.saveProgress('totalPieces', totalPieces);
+    Bridge.send('level_failed');
+  }
+
+  // ============================== Shop actions ==============================
+  function saveShop() {
+    Bridge.saveProgress('shop', {
+      magnets: { owned: ownedMagnets, selected: selectedMagnet },
+      skins: { owned: ownedSkins, selected: selectedSkin },
+      envs: { owned: ownedEnvs, selected: selectedEnv }
+    });
+  }
+  function buyOrSelect(list, owned, selectedKey, id, price) {
+    if (owned.indexOf(id) !== -1) {
+      if (selectedKey === 'magnet') selectedMagnet = id;
+      else if (selectedKey === 'skin') selectedSkin = id;
+      else selectedEnv = id;
+      saveShop();
+      AudioSys.click();
+      if (selectedKey === 'env') rebuildBackground();
+      return true;
+    }
+    if (coins < price) {
+      AudioSys.denied();
+      showToast(t('notEnough'));
+      return false;
+    }
+    coins -= price;
+    owned.push(id);
+    if (selectedKey === 'magnet') selectedMagnet = id;
+    else if (selectedKey === 'skin') selectedSkin = id;
+    else selectedEnv = id;
+    Bridge.saveProgress('coins', coins);
+    saveShop();
+    AudioSys.unlockSound();
+    AudioSys.coin();
+    showToast(t('owned') + '!');
+    if (selectedKey === 'env') rebuildBackground();
+    return true;
+  }
+
+  // ============================== Navigation ==============================
+  function goMenu() {
+    state = 'menu';
+    panel = null;
+    tutorialActive = false;
+    AudioSys.stopHum();
+    AudioSys.setMusicMode('menu');
+    Bridge.saveProgress('totalPieces', totalPieces);
+  }
+  function goLevels() { state = 'levels'; panel = null; AudioSys.click(); }
+  function goShop() { state = 'shop'; panel = null; AudioSys.click(); }
+  function startLevel(n) {
+    AudioSys.click();
+    loadLevel(n - 1, false);
+  }
+  function startDaily() {
+    AudioSys.click();
+    loadLevel(-1, true);
+  }
+  function nextLevel() {
+    AudioSys.click();
+    if (isDaily) { goMenu(); return; }
+    if (levelIndex + 1 < TOTAL_LEVELS) loadLevel(levelIndex + 1, false);
+    else goMenu();
+  }
+  function pauseGame() {
+    if (state !== 'playing' || panel) return;
+    panel = 'paused';
+    AudioSys.stopHum();
+    AudioSys.setPaused(true);
+    Bridge.send('level_paused');
+  }
+  function resumeGame() {
+    if (panel !== 'paused') return;
+    panel = null;
+    AudioSys.setPaused(false);
+    AudioSys.click();
+    Bridge.send('level_resumed');
+  }
+  function onPlatformPause(isPaused) {
+    if (isPaused) pauseGame();
+  }
+
+  // ============================== Input ==============================
+  var BTN = {
+    menuMute:   { x: 14, y: 14, w: 44, h: 40 },
+    menuHowto:  { x: 66, y: 14, w: 44, h: 40 },
+    menuLang:   { x: 118, y: 14, w: 56, h: 40 },
+    menuInfo:   { x: 182, y: 14, w: 44, h: 40 },
+    menuPlay:   { x: 90, y: 420, w: 300, h: 60 },
+    menuLevels: { x: 90, y: 492, w: 300, h: 48 },
+    menuShop:   { x: 90, y: 552, w: 300, h: 48 },
+    menuDaily:  { x: 90, y: 612, w: 300, h: 48 },
+    howtoClose: { x: 170, y: 540, w: 140, h: 48 },
+    back:       { x: 14, y: 14, w: 70, h: 40 },
+    tabMagnets: { x: 16, y: 70, w: 141, h: 42 },
+    tabSkins:   { x: 169, y: 70, w: 141, h: 42 },
+    tabEnvs:    { x: 322, y: 70, w: 141, h: 42 },
+    pause:      { x: 14, y: 14, w: 44, h: 40 },
+    hudMute:    { x: 66, y: 14, w: 44, h: 40 },
+    hudRestart: { x: 118, y: 14, w: 44, h: 40 },
+    tutSkip:    { x: 372, y: 132, w: 68, h: 32 },
+    next:       { x: 70, y: 470, w: 340, h: 52 },
+    replay:     { x: 70, y: 534, w: 160, h: 48 },
+    toMenu:     { x: 250, y: 534, w: 160, h: 48 },
+    retry:      { x: 70, y: 400, w: 340, h: 52 },
+    failMenu:   { x: 70, y: 464, w: 340, h: 48 },
+    resume:     { x: 70, y: 330, w: 340, h: 52 },
+    pauseRestart: { x: 70, y: 394, w: 340, h: 48 },
+    pauseMenu:  { x: 70, y: 454, w: 340, h: 48 }
+  };
+  var pressAnim = {}; // button id -> press time (for squash)
+  function press(id) { pressAnim[id] = time; AudioSys.click(); }
+  function pressScale(id) {
+    var pt = pressAnim[id];
+    if (pt === undefined) return 1;
+    var f = (time - pt) / 0.15;
+    if (f >= 1) return 1;
+    return 1 - 0.06 * Math.sin(f * Math.PI);
+  }
+
+  var scrollDrag = null; // {screen, startY, startScroll, moved}
+
+  function toggleMute() {
+    AudioSys.setUserMuted(!AudioSys.userMuted);
+    Bridge.saveProgress('muted', AudioSys.userMuted ? '1' : '0');
+    if (!AudioSys.userMuted) AudioSys.click();
+  }
+  function cycleLang() {
+    var i = LANG_ORDER.indexOf(lang);
+    setLanguage(LANG_ORDER[(i + 1) % LANG_ORDER.length]);
+    Bridge.saveProgress('lang', lang);
+    AudioSys.click();
+  }
+
+  function levelCellRect(i) {
+    var col = i % 5, row = Math.floor(i / 5);
+    return { x: 24 + col * 92, y: 110 + row * 92 - levelsScroll, w: 84, h: 84 };
+  }
+  function shopRowRect(i) {
+    return { x: 16, y: 130 + i * 140 - shopScroll, w: 448, h: 128 };
+  }
+  function shopActionRect(i) {
+    var r = shopRowRect(i);
+    return { x: r.x + 314, y: r.y + 40, w: 110, h: 48 };
+  }
+  function shopItems() {
+    if (shopTab === 'magnets') return MAGNETS;
+    if (shopTab === 'skins') return SKINS;
+    return ENVS;
+  }
+
+  function onPointerDown(e) {
+    AudioSys.unlock();
+    var p = toLogical(e);
+    if (state === 'menu') {
+      if (panel === 'howto') {
+        if (hit(p.x, p.y, BTN.howtoClose)) { press('howtoClose'); panel = null; }
+        return;
+      }
+      if (hit(p.x, p.y, BTN.menuMute)) { toggleMute(); return; }
+      if (hit(p.x, p.y, BTN.menuHowto)) {
+        // "?" replays the interactive tutorial (level 1, guided).
+        press('menuHowto');
+        tutorialReplay = true;
+        loadLevel(0, false);
+        return;
+      }
+      if (hit(p.x, p.y, BTN.menuLang)) { cycleLang(); return; }
+      if (hit(p.x, p.y, BTN.menuInfo)) { press('menuInfo'); panel = 'howto'; return; }
+      if (hit(p.x, p.y, BTN.menuPlay)) { press('menuPlay'); startLevel(Math.min(unlocked, TOTAL_LEVELS)); return; }
+      if (hit(p.x, p.y, BTN.menuLevels)) { press('menuLevels'); goLevels(); return; }
+      if (hit(p.x, p.y, BTN.menuShop)) { press('menuShop'); goShop(); return; }
+      if (hit(p.x, p.y, BTN.menuDaily)) { press('menuDaily'); startDaily(); return; }
+      return;
+    }
+    if (state === 'levels') {
+      if (hit(p.x, p.y, BTN.back)) { press('back'); goMenu(); return; }
+      scrollDrag = { screen: 'levels', startY: p.y, startScroll: levelsScroll, moved: 0 };
+      return;
+    }
+    if (state === 'shop') {
+      if (hit(p.x, p.y, BTN.back)) { press('back'); goMenu(); return; }
+      if (hit(p.x, p.y, BTN.tabMagnets)) { press('tabMagnets'); shopTab = 'magnets'; shopScroll = 0; return; }
+      if (hit(p.x, p.y, BTN.tabSkins)) { press('tabSkins'); shopTab = 'skins'; shopScroll = 0; return; }
+      if (hit(p.x, p.y, BTN.tabEnvs)) { press('tabEnvs'); shopTab = 'envs'; shopScroll = 0; return; }
+      scrollDrag = { screen: 'shop', startY: p.y, startScroll: shopScroll, moved: 0 };
+      return;
+    }
+    if (state === 'playing') {
+      if (panel === 'complete') {
+        if (hit(p.x, p.y, BTN.next)) { nextLevel(); return; }
+        if (hit(p.x, p.y, BTN.replay)) { press('replay'); loadLevel(isDaily ? -1 : levelIndex, isDaily); return; }
+        if (hit(p.x, p.y, BTN.toMenu)) { press('toMenu'); goMenu(); return; }
+        return;
+      }
+      if (panel === 'failed') {
+        if (hit(p.x, p.y, BTN.retry)) { press('retry'); loadLevel(isDaily ? -1 : levelIndex, isDaily); return; }
+        if (hit(p.x, p.y, BTN.failMenu)) { press('failMenu'); goMenu(); return; }
+        return;
+      }
+      if (panel === 'paused') {
+        if (hit(p.x, p.y, BTN.resume)) { resumeGame(); return; }
+        if (hit(p.x, p.y, BTN.pauseRestart)) { press('pauseRestart'); AudioSys.setPaused(false); loadLevel(isDaily ? -1 : levelIndex, isDaily); return; }
+        if (hit(p.x, p.y, BTN.pauseMenu)) { press('pauseMenu'); AudioSys.setPaused(false); goMenu(); return; }
+        return;
+      }
+      if (hit(p.x, p.y, BTN.pause)) { press('pause'); pauseGame(); return; }
+      if (hit(p.x, p.y, BTN.hudMute)) { toggleMute(); return; }
+      if (hit(p.x, p.y, BTN.hudRestart)) { press('hudRestart'); loadLevel(isDaily ? -1 : levelIndex, isDaily); return; }
+      if (tutorialActive && hit(p.x, p.y, BTN.tutSkip)) { tutorialSkip(); return; }
+      // Start dragging the magnet (anywhere in the arena, or anywhere at all).
+      pointer.down = true;
+      pointer.x = p.x; pointer.y = p.y;
+      hasDragged = true;
+      return;
+    }
+  }
+
+  function onPointerMove(e) {
+    var p = toLogical(e);
+    if (scrollDrag) {
+      var dy = scrollDrag.startY - p.y;
+      scrollDrag.moved = Math.max(scrollDrag.moved, Math.abs(dy));
+      if (scrollDrag.screen === 'levels') {
+        var maxL = Math.max(0, 110 + 9 * 92 - 800 + 16);
+        levelsScroll = clamp(scrollDrag.startScroll + dy, 0, maxL);
+      } else {
+        var n = shopItems().length;
+        var maxS = Math.max(0, 130 + n * 140 - 800 + 16);
+        shopScroll = clamp(scrollDrag.startScroll + dy, 0, maxS);
+      }
+      return;
+    }
+    if (state === 'playing' && pointer.down && !panel) {
+      pointer.x = p.x; pointer.y = p.y;
+    }
+  }
+
+  function onPointerUp(e) {
+    AudioSys.stopHum();
+    pointer.down = false;
+    if (scrollDrag) {
+      var sd = scrollDrag;
+      scrollDrag = null;
+      if (sd.moved >= 12) return; // it was a scroll, not a tap
+      var p = toLogical(e);
+      if (sd.screen === 'levels') {
+        for (var i = 0; i < TOTAL_LEVELS; i++) {
+          if (hit(p.x, p.y, levelCellRect(i))) {
+            if (i + 1 <= unlocked) { press('lvl' + i); startLevel(i + 1); }
+            else { AudioSys.denied(); showToast(t('locked')); }
+            return;
+          }
+        }
+      } else if (sd.screen === 'shop') {
+        var items = shopItems();
+        for (var j = 0; j < items.length; j++) {
+          if (hit(p.x, p.y, shopActionRect(j))) {
+            var it = items[j];
+            if (shopTab === 'magnets') buyOrSelect(MAGNETS, ownedMagnets, 'magnet', it.id, it.price);
+            else if (shopTab === 'skins') buyOrSelect(SKINS, ownedSkins, 'skin', it.id, it.price);
+            else buyOrSelect(ENVS, ownedEnvs, 'env', it.id, it.price);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
+      if (state === 'playing' && !panel) pauseGame();
+      else if (panel === 'paused') resumeGame();
+    }
+  }
+
+  // ============================== Rendering ==============================
+  var bgCanvas = null;
+  var bgEnv = '';
+
+  function rebuildBackground() {
+    bgEnv = selectedEnv;
+    bgCanvas = document.createElement('canvas');
+    bgCanvas.width = W; bgCanvas.height = H;
+    var b = bgCanvas.getContext('2d');
+    var g, i;
+    if (selectedEnv === 'workshop') {
+      g = b.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#7a5a3c'); g.addColorStop(1, '#5d4329');
+      b.fillStyle = g; b.fillRect(0, 0, W, H);
+      // Wood planks.
+      b.strokeStyle = 'rgba(0,0,0,0.18)'; b.lineWidth = 2;
+      for (i = 0; i < 10; i++) {
+        b.beginPath(); b.moveTo(0, i * 80 + 40); b.lineTo(W, i * 80 + 40); b.stroke();
+      }
+      // Arena floor: light workbench.
+      g = b.createLinearGradient(0, ARENA.y, 0, ARENA.y + ARENA.h);
+      g.addColorStop(0, '#e8d9b8'); g.addColorStop(1, '#d3bd93');
+      b.fillStyle = g;
+      rr(b, ARENA.x, ARENA.y, ARENA.w, ARENA.h, 18); b.fill();
+      b.strokeStyle = 'rgba(0,0,0,0.15)';
+      for (i = 1; i < 8; i++) {
+        b.beginPath(); b.moveTo(ARENA.x, ARENA.y + i * 80); b.lineTo(ARENA.x + ARENA.w, ARENA.y + i * 80); b.stroke();
+      }
+    } else if (selectedEnv === 'scrapyard') {
+      g = b.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#33382f'); g.addColorStop(1, '#22261f');
+      b.fillStyle = g; b.fillRect(0, 0, W, H);
+      g = b.createLinearGradient(0, ARENA.y, 0, ARENA.y + ARENA.h);
+      g.addColorStop(0, '#5a6055'); g.addColorStop(1, '#454a41');
+      b.fillStyle = g;
+      rr(b, ARENA.x, ARENA.y, ARENA.w, ARENA.h, 18); b.fill();
+      // Rust blobs (deterministic).
+      for (i = 0; i < 26; i++) {
+        var rx = ARENA.x + hash(i * 3 + 1) * ARENA.w;
+        var ry = ARENA.y + hash(i * 7 + 2) * ARENA.h;
+        var rr2 = 8 + hash(i * 5 + 3) * 22;
+        var rg = b.createRadialGradient(rx, ry, 1, rx, ry, rr2);
+        rg.addColorStop(0, 'rgba(150,80,30,0.35)'); rg.addColorStop(1, 'rgba(150,80,30,0)');
+        b.fillStyle = rg;
+        b.beginPath(); b.arc(rx, ry, rr2, 0, Math.PI * 2); b.fill();
+      }
+      // Hazard stripes along the arena top edge.
+      b.save();
+      b.beginPath(); rr(b, ARENA.x, ARENA.y, ARENA.w, ARENA.h, 18); b.clip();
+      for (i = 0; i < 12; i++) {
+        b.fillStyle = i % 2 === 0 ? 'rgba(250,200,0,0.25)' : 'rgba(0,0,0,0.2)';
+        b.beginPath();
+        b.moveTo(ARENA.x + i * 40, ARENA.y);
+        b.lineTo(ARENA.x + i * 40 + 20, ARENA.y);
+        b.lineTo(ARENA.x + i * 40 + 8, ARENA.y + 12);
+        b.lineTo(ARENA.x + i * 40 - 12, ARENA.y + 12);
+        b.closePath(); b.fill();
+      }
+      b.restore();
+    } else if (selectedEnv === 'neon') {
+      g = b.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#141233'); g.addColorStop(1, '#0a0920');
+      b.fillStyle = g; b.fillRect(0, 0, W, H);
+      g = b.createLinearGradient(0, ARENA.y, 0, ARENA.y + ARENA.h);
+      g.addColorStop(0, '#1d1a4d'); g.addColorStop(1, '#14123a');
+      b.fillStyle = g;
+      rr(b, ARENA.x, ARENA.y, ARENA.w, ARENA.h, 18); b.fill();
+      // Neon grid.
+      b.strokeStyle = 'rgba(56,189,248,0.14)'; b.lineWidth = 1;
+      for (i = 1; i < 11; i++) {
+        b.beginPath(); b.moveTo(ARENA.x + i * 40, ARENA.y); b.lineTo(ARENA.x + i * 40, ARENA.y + ARENA.h); b.stroke();
+        b.beginPath(); b.moveTo(ARENA.x, ARENA.y + i * 56); b.lineTo(ARENA.x + ARENA.w, ARENA.y + i * 56); b.stroke();
+      }
+      for (i = 0; i < 14; i++) {
+        var nx = ARENA.x + hash(i * 11 + 5) * ARENA.w;
+        var ny = ARENA.y + hash(i * 13 + 7) * ARENA.h;
+        b.fillStyle = i % 2 ? 'rgba(168,85,247,0.5)' : 'rgba(56,189,248,0.5)';
+        b.beginPath(); b.arc(nx, ny, 2.5, 0, Math.PI * 2); b.fill();
+      }
+    } else { // space
+      g = b.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#0a0a1e'); g.addColorStop(1, '#030308');
+      b.fillStyle = g; b.fillRect(0, 0, W, H);
+      for (i = 0; i < 90; i++) {
+        var sx = hash(i * 17 + 1) * W, sy = hash(i * 19 + 2) * H;
+        b.fillStyle = 'rgba(255,255,255,' + (0.2 + hash(i * 23 + 3) * 0.6) + ')';
+        b.beginPath(); b.arc(sx, sy, 0.6 + hash(i * 29 + 4) * 1.4, 0, Math.PI * 2); b.fill();
+      }
+      g = b.createLinearGradient(0, ARENA.y, 0, ARENA.y + ARENA.h);
+      g.addColorStop(0, '#191936'); g.addColorStop(1, '#101024');
+      b.fillStyle = g;
+      rr(b, ARENA.x, ARENA.y, ARENA.w, ARENA.h, 18); b.fill();
+      b.strokeStyle = 'rgba(255,255,255,0.06)'; b.lineWidth = 1;
+      for (i = 1; i < 6; i++) {
+        b.beginPath(); b.moveTo(ARENA.x, ARENA.y + i * 100); b.lineTo(ARENA.x + ARENA.w, ARENA.y + i * 100); b.stroke();
+      }
+    }
+    // Arena rim.
+    b.strokeStyle = 'rgba(0,0,0,0.35)'; b.lineWidth = 3;
+    rr(b, ARENA.x, ARENA.y, ARENA.w, ARENA.h, 18); b.stroke();
+  }
+
+  function drawShadowCard(c, x, y, w, h, r, fill) {
+    c.fillStyle = 'rgba(0,0,0,0.28)';
+    rr(c, x + 3, y + 5, w, h, r); c.fill();
+    var g = c.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, fill[0]); g.addColorStop(1, fill[1]);
+    c.fillStyle = g;
+    rr(c, x, y, w, h, r); c.fill();
+  }
+
+  function drawButton(c, rect, label, kind, id, fontSize) {
+    var s = id ? pressScale(id) : 1;
+    var cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
+    c.save();
+    c.translate(cx, cy);
+    c.scale(s, s);
+    c.translate(-cx, -cy);
+    var colors = {
+      green: ['#4ade80', '#16a34a'], blue: ['#60a5fa', '#2563eb'],
+      steel: ['#94a3b8', '#475569'], gold: ['#fbbf24', '#d97706'],
+      red: ['#f87171', '#dc2626'], dark: ['#475569', '#1e293b']
+    }[kind] || ['#94a3b8', '#475569'];
+    drawShadowCard(c, rect.x, rect.y, rect.w, rect.h, 14, colors);
+    c.fillStyle = '#ffffff';
+    c.font = 'bold ' + (fontSize || 20) + 'px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(label, cx, cy + 1);
+    c.restore();
+  }
+
+  function drawCoinIcon(c, x, y, r) {
+    var g = c.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+    g.addColorStop(0, '#fef08a'); g.addColorStop(0.6, '#facc15'); g.addColorStop(1, '#ca8a04');
+    c.fillStyle = g;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#a16207'; c.lineWidth = 1.5;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.stroke();
+    c.fillStyle = '#a16207';
+    c.font = 'bold ' + Math.round(r * 1.1) + 'px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('$', x, y + 1);
+  }
+
+  function drawCoinsBadge(c, x, y, w, h) {
+    drawShadowCard(c, x, y, w, h, 12, ['#3b3b4d', '#23232f']);
+    drawCoinIcon(c, x + 22, y + h / 2, 11);
+    c.fillStyle = '#fde68a';
+    c.font = 'bold 19px Arial';
+    c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillText(String(coins), x + 40, y + h / 2 + 1);
+  }
+
+  function drawIconButton(c, rect, glyph, id, active) {
+    var s = id ? pressScale(id) : 1;
+    var cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
+    c.save();
+    c.translate(cx, cy); c.scale(s, s); c.translate(-cx, -cy);
+    drawShadowCard(c, rect.x, rect.y, rect.w, rect.h, 10, active ? ['#f87171', '#dc2626'] : ['#4b5563', '#1f2937']);
+    c.fillStyle = '#ffffff';
+    c.font = 'bold 20px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(glyph, cx, cy + 1);
+    c.restore();
+  }
+
+  // ---- Metal pieces: radial gradient + specular highlight ----
+  function metalGradient(c, x, y, r, light, mid, dark) {
+    var g = c.createRadialGradient(x - r * 0.4, y - r * 0.45, r * 0.1, x, y, r * 1.15);
+    g.addColorStop(0, light); g.addColorStop(0.55, mid); g.addColorStop(1, dark);
+    return g;
+  }
+  function drawMetalPiece(c, x, y, type, r, rot) {
+    c.save();
+    c.translate(x, y);
+    c.rotate(rot || 0);
+    var steel = function () { return metalGradient(c, 0, 0, r, '#f8fafc', '#a8b6c4', '#5b6b7c'); };
+    var gold = function () { return metalGradient(c, 0, 0, r, '#fef08a', '#facc15', '#b45309'); };
+    if (type === 'screw' || type === 'bolt') {
+      c.fillStyle = steel();
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#334155'; c.lineWidth = 1.5;
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
+      c.strokeStyle = '#334155'; c.lineWidth = 2.5;
+      c.beginPath(); c.moveTo(-r * 0.55, 0); c.lineTo(r * 0.55, 0); c.stroke();
+      if (type === 'bolt') {
+        c.beginPath(); c.arc(0, 0, r * 0.35, 0, Math.PI * 2);
+        c.fillStyle = '#64748b'; c.fill();
+      }
+    } else if (type === 'nail') {
+      c.fillStyle = steel();
+      rr(c, -r * 0.35, -r * 1.1, r * 0.7, r * 2.2, r * 0.35); c.fill();
+      c.beginPath(); c.arc(0, -r * 1.1, r * 0.55, 0, Math.PI * 2);
+      c.fillStyle = '#cbd5e1'; c.fill();
+      c.strokeStyle = '#334155'; c.lineWidth = 1;
+      c.beginPath(); c.arc(0, -r * 1.1, r * 0.55, 0, Math.PI * 2); c.stroke();
+    } else if (type === 'nut') {
+      c.fillStyle = steel();
+      c.beginPath();
+      for (var i = 0; i < 6; i++) {
+        var a = i * Math.PI / 3;
+        var px = Math.cos(a) * r, py = Math.sin(a) * r;
+        if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+      }
+      c.closePath(); c.fill();
+      c.strokeStyle = '#334155'; c.lineWidth = 1.5; c.stroke();
+      c.fillStyle = '#334155';
+      c.beginPath(); c.arc(0, 0, r * 0.45, 0, Math.PI * 2); c.fill();
+    } else if (type === 'gear' || type === 'key') {
+      c.fillStyle = type === 'key' ? gold() : steel();
+      c.beginPath();
+      var teeth = 8;
+      for (var j = 0; j < teeth * 2; j++) {
+        var aa = j * Math.PI / teeth;
+        var rr2 = j % 2 === 0 ? r * 1.15 : r * 0.8;
+        var qx = Math.cos(aa) * rr2, qy = Math.sin(aa) * rr2;
+        if (j === 0) c.moveTo(qx, qy); else c.lineTo(qx, qy);
+      }
+      c.closePath(); c.fill();
+      c.strokeStyle = type === 'key' ? '#92400e' : '#334155'; c.lineWidth = 1.5; c.stroke();
+      c.fillStyle = type === 'key' ? '#fef3c7' : '#e2e8f0';
+      c.beginPath(); c.arc(0, 0, r * 0.4, 0, Math.PI * 2); c.fill();
+    } else { // coin
+      c.fillStyle = gold();
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#92400e'; c.lineWidth = 1.5;
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
+      drawStarShape(c, 0, 0, r * 0.5, '#92400e');
+    }
+    // Specular highlight.
+    c.fillStyle = 'rgba(255,255,255,0.75)';
+    c.beginPath(); c.arc(-r * 0.35, -r * 0.4, r * 0.22, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+
+  // ---- Horseshoe magnet (top-down): two-tone arc + pole tips ----
+  function drawMagnetShape(c, x, y, r, skin, squash, glowAlpha) {
+    var sq = 1 - 0.12 * (squash || 0);
+    c.save();
+    c.translate(x, y);
+    c.scale(2 - sq, sq);
+    // Glow.
+    if (glowAlpha > 0) {
+      var gg = c.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 2.1);
+      gg.addColorStop(0, skin.ring);
+      gg.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = gg;
+      c.globalAlpha = glowAlpha;
+      c.beginPath(); c.arc(0, 0, r * 2.1, 0, Math.PI * 2); c.fill();
+      c.globalAlpha = 1;
+    }
+    // Horseshoe: arc from 200deg to 340deg (opening at bottom), two halves.
+    var lw = r * 0.62;
+    c.lineCap = 'round';
+    c.strokeStyle = skin.a;
+    c.lineWidth = lw;
+    c.beginPath(); c.arc(0, 0, r * 0.62, Math.PI * 1.1, Math.PI * 1.6); c.stroke();
+    c.strokeStyle = skin.b;
+    c.beginPath(); c.arc(0, 0, r * 0.62, Math.PI * 1.6, Math.PI * 1.9); c.stroke();
+    // Pole tips.
+    c.fillStyle = skin.a;
+    c.beginPath(); c.arc(Math.cos(Math.PI * 1.1) * r * 0.62, Math.sin(Math.PI * 1.1) * r * 0.62, lw * 0.5, 0, Math.PI * 2); c.fill();
+    c.fillStyle = skin.b;
+    c.beginPath(); c.arc(Math.cos(Math.PI * 1.9) * r * 0.62, Math.sin(Math.PI * 1.9) * r * 0.62, lw * 0.5, 0, Math.PI * 2); c.fill();
+    // Outline + N/S.
+    c.strokeStyle = 'rgba(0,0,0,0.35)'; c.lineWidth = 1.5;
+    c.beginPath(); c.arc(0, 0, r * 0.62 + lw / 2, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
+    c.fillStyle = '#1e293b';
+    c.font = 'bold ' + Math.round(r * 0.42) + 'px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('N', Math.cos(Math.PI * 1.28) * r * 0.62, Math.sin(Math.PI * 1.28) * r * 0.62);
+    c.fillStyle = '#475569';
+    c.fillText('S', Math.cos(Math.PI * 1.72) * r * 0.62, Math.sin(Math.PI * 1.72) * r * 0.62);
+    c.restore();
+  }
+
+  function drawEnemyMagnet(c, x, y, kind, pulse) {
+    // kind: 'attractor' (blue, pulls in) | 'repeller' (red, pushes out)
+    var r = 18;
+    var skin = kind === 'attractor'
+      ? { a: '#2563eb', b: '#dbeafe', ring: 'rgba(37,99,235,0.3)', glow: '#60a5fa' }
+      : { a: '#dc2626', b: '#fee2e2', ring: 'rgba(220,38,38,0.3)', glow: '#f87171' };
+    // Range ring (pulsing).
+    c.strokeStyle = skin.ring;
+    c.lineWidth = 2;
+    c.setLineDash([6, 8]);
+    c.beginPath(); c.arc(x, y, (kind === 'attractor' ? ATTRACTOR_R : REPELLER_R) * (0.97 + 0.03 * pulse), 0, Math.PI * 2); c.stroke();
+    c.setLineDash([]);
+    drawMagnetShape(c, x, y, r, skin, 0, 0.8);
+    // Direction arrows.
+    c.fillStyle = skin.a;
+    c.font = 'bold 13px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(kind === 'attractor' ? '↓↑' : '↔', x, y + r + 14);
+  }
+
+  function drawSpikeZone(c, x, y, r, pulse) {
+    c.save();
+    c.translate(x, y);
+    // Danger halo.
+    var g = c.createRadialGradient(0, 0, r * 0.4, 0, 0, r * 1.35);
+    g.addColorStop(0, 'rgba(220,38,38,0.30)');
+    g.addColorStop(1, 'rgba(220,38,38,0)');
+    c.fillStyle = g;
+    c.beginPath(); c.arc(0, 0, r * 1.35, 0, Math.PI * 2); c.fill();
+    // Spikes.
+    c.fillStyle = '#b91c1c';
+    var n = 10;
+    for (var i = 0; i < n; i++) {
+      var a = i * Math.PI * 2 / n + pulse * 0.2;
+      var bx = Math.cos(a) * r * 0.75, by = Math.sin(a) * r * 0.75;
+      var tx = Math.cos(a) * r * 1.25, ty = Math.sin(a) * r * 1.25;
+      var px = Math.cos(a + 0.28) * r * 0.75, py = Math.sin(a + 0.28) * r * 0.75;
+      c.beginPath(); c.moveTo(bx, by); c.lineTo(tx, ty); c.lineTo(px, py); c.closePath(); c.fill();
+    }
+    c.fillStyle = '#7f1d1d';
+    c.beginPath(); c.arc(0, 0, r * 0.72, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#fca5a5';
+    c.beginPath(); c.arc(-r * 0.2, -r * 0.25, r * 0.14, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+
+  function drawBlock(c, b) {
+    var g = c.createLinearGradient(b.x, b.y, b.x, b.y + b.h);
+    g.addColorStop(0, '#8b98a9'); g.addColorStop(0.5, '#64748b'); g.addColorStop(1, '#475569');
+    c.fillStyle = g;
+    rr(c, b.x, b.y, b.w, b.h, 6); c.fill();
+    c.strokeStyle = '#334155'; c.lineWidth = 2;
+    rr(c, b.x, b.y, b.w, b.h, 6); c.stroke();
+    // Top highlight.
+    c.fillStyle = 'rgba(255,255,255,0.25)';
+    rr(c, b.x + 3, b.y + 3, b.w - 6, 6, 3); c.fill();
+    // Rivets.
+    c.fillStyle = '#334155';
+    var riv = [[b.x + 8, b.y + 8], [b.x + b.w - 8, b.y + 8], [b.x + 8, b.y + b.h - 8], [b.x + b.w - 8, b.y + b.h - 8]];
+    for (var i = 0; i < riv.length; i++) {
+      c.beginPath(); c.arc(riv[i][0], riv[i][1], 3, 0, Math.PI * 2); c.fill();
+    }
+  }
+
+  function drawWood(c, w) {
+    var g = c.createRadialGradient(w.x - w.r * 0.3, w.y - w.r * 0.3, 2, w.x, w.y, w.r);
+    g.addColorStop(0, '#c89b6d'); g.addColorStop(0.7, '#a9764b'); g.addColorStop(1, '#7c5330');
+    c.fillStyle = g;
+    c.beginPath(); c.arc(w.x, w.y, w.r, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#5d3d22'; c.lineWidth = 2;
+    c.beginPath(); c.arc(w.x, w.y, w.r, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = 'rgba(93,61,34,0.6)'; c.lineWidth = 1.5;
+    c.beginPath(); c.arc(w.x, w.y, w.r * 0.6, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(w.x, w.y, w.r * 0.3, 0, Math.PI * 2); c.stroke();
+  }
+
+  function drawGate(c, g) {
+    var slide = (1 - g.anim) * 0; // barrier slides up as it opens
+    var openH = g.h * (1 - g.anim);
+    if (g.anim >= 1) {
+      // Fully open: just the posts + glow.
+      c.fillStyle = 'rgba(124,252,0,0.25)';
+      rr(c, g.x, g.y, g.w, g.h, 4); c.fill();
+      return;
+    }
+    // Barrier with hazard stripes.
+    c.save();
+    c.beginPath(); rr(c, g.x, g.y + slide, g.w, openH, 4); c.clip();
+    c.fillStyle = '#facc15';
+    c.fillRect(g.x, g.y + slide, g.w, openH);
+    c.fillStyle = '#1e293b';
+    for (var i = -1; i < g.w / 16 + 1; i++) {
+      c.beginPath();
+      c.moveTo(g.x + i * 16, g.y + slide + openH);
+      c.lineTo(g.x + i * 16 + 8, g.y + slide + openH);
+      c.lineTo(g.x + i * 16 + 8 + openH, g.y + slide);
+      c.lineTo(g.x + i * 16 + openH, g.y + slide);
+      c.closePath(); c.fill();
+    }
+    c.restore();
+    c.strokeStyle = '#1e293b'; c.lineWidth = 2;
+    rr(c, g.x, g.y + slide, g.w, openH, 4); c.stroke();
+    if (g.kind === 'key' || g.kind === 'pieces') {
+      // Lock icon.
+      var cx = g.x + g.w / 2, cy = g.y + slide + openH / 2;
+      c.fillStyle = '#1e293b';
+      rr(c, cx - 8, cy - 2, 16, 12, 3); c.fill();
+      c.strokeStyle = '#1e293b'; c.lineWidth = 3;
+      c.beginPath(); c.arc(cx, cy - 2, 6, Math.PI, 0); c.stroke();
+    }
+  }
+
+  function drawFinishZone(c, x, y, open, pulse) {
+    var r = FINISH_R;
+    c.save();
+    c.translate(x, y);
+    if (open) {
+      var g = c.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.7);
+      g.addColorStop(0, 'rgba(74,222,128,0.55)');
+      g.addColorStop(1, 'rgba(74,222,128,0)');
+      c.fillStyle = g;
+      c.beginPath(); c.arc(0, 0, r * 1.7, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#22c55e';
+      c.lineWidth = 3;
+      c.setLineDash([10, 6]);
+      c.lineDashOffset = -time * 30;
+      c.beginPath(); c.arc(0, 0, r * (1 + 0.05 * pulse), 0, Math.PI * 2); c.stroke();
+      c.setLineDash([]);
+      c.fillStyle = 'rgba(74,222,128,0.35)';
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fill();
+      // Checkered flag.
+      c.fillStyle = '#166534';
+      c.fillRect(-2, -r * 0.7, 3, r * 1.1);
+      for (var i = 0; i < 3; i++) for (var j = 0; j < 2; j++) {
+        c.fillStyle = (i + j) % 2 === 0 ? '#166534' : '#ffffff';
+        c.fillRect(1 + i * 7, -r * 0.7 + j * 7, 7, 7);
+      }
+    } else {
+      c.strokeStyle = 'rgba(148,163,184,0.8)';
+      c.lineWidth = 3;
+      c.setLineDash([8, 8]);
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.stroke();
+      c.setLineDash([]);
+      c.fillStyle = 'rgba(100,116,139,0.25)';
+      c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#64748b';
+      rr(c, -9, -2, 18, 13, 3); c.fill();
+      c.strokeStyle = '#64748b'; c.lineWidth = 3;
+      c.beginPath(); c.arc(0, -2, 7, Math.PI, 0); c.stroke();
+    }
+    c.restore();
+  }
+
+  // ============================== Screens ==============================
+  function renderMenu() {
+    var c = ctx;
+    c.fillStyle = 'rgba(8,10,18,0.45)';
+    c.fillRect(0, 0, W, H);
+    drawIconButton(c, BTN.menuMute, AudioSys.userMuted ? '✕' : '♪', 'menuMute', AudioSys.userMuted);
+    drawIconButton(c, BTN.menuHowto, '?', 'menuHowto', false);
+    drawIconButton(c, BTN.menuLang, lang.toUpperCase(), 'menuLang', false);
+    drawIconButton(c, BTN.menuInfo, 'i', 'menuInfo', false);
+    drawCoinsBadge(c, 316, 14, 150, 40);
+
+    // Title with metallic gradient.
+    var g = c.createLinearGradient(0, 70, 0, 130);
+    g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, '#fbbf24'); g.addColorStop(1, '#d97706');
+    c.fillStyle = g;
+    c.font = 'bold 44px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('MAGNET', 240, 92);
+    c.fillText('MASTER', 240, 136);
+    c.fillStyle = '#e2e8f0';
+    c.font = 'bold 20px Arial';
+    c.fillText(t('subtitle'), 240, 170);
+
+    // Hero: big magnet + orbiting pieces + pull ring.
+    var hx = 240, hy = 290;
+    c.strokeStyle = 'rgba(255,255,255,0.25)';
+    c.lineWidth = 2;
+    c.setLineDash([8, 8]);
+    c.beginPath(); c.arc(hx, hy, 96, 0, Math.PI * 2); c.stroke();
+    c.setLineDash([]);
+    for (var i = 0; i < 6; i++) {
+      var a = time * 0.7 + i * Math.PI / 3;
+      drawMetalPiece(c, hx + Math.cos(a) * 96, hy + Math.sin(a) * 96 * 0.55, PIECE_TYPES[i], 11, time + i);
+    }
+    drawMagnetShape(c, hx, hy, 42, skinDef(selectedSkin), 0, 0.9);
+
+    drawButton(c, BTN.menuPlay, '▶  ' + t('play'), 'green', 'menuPlay', 24);
+    drawButton(c, BTN.menuLevels, t('levels'), 'blue', 'menuLevels', 19);
+    drawButton(c, BTN.menuShop, t('shop'), 'gold', 'menuShop', 19);
+    var dailyAvail = dailyAvailable();
+    drawButton(c, BTN.menuDaily, t('daily') + (dailyAvail ? '  •  ' + t('dailyReward') : '  •  ' + dailyCountdown()),
+               dailyAvail ? 'green' : 'steel', 'menuDaily', 17);
+
+    // Missions card.
+    drawShadowCard(c, 16, 672, 448, 116, 14, ['#2b2b3d', '#1d1d29']);
+    c.fillStyle = '#fde68a';
+    c.font = 'bold 16px Arial';
+    c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillText('★ ' + t('missions'), 32, 692);
+    for (var m = 0; m < MISSION_DEFS.length; m++) {
+      var def = MISSION_DEFS[m];
+      var prog = Math.min(missionProgress(def), def.target);
+      var done = !!mClaimed[def.id];
+      var my = 712 + m * 24;
+      c.fillStyle = done ? '#4ade80' : '#e2e8f0';
+      c.font = '13px Arial';
+      c.fillText((done ? '✓ ' : '') + t(def.nameKey), 32, my);
+      var bw = 120, bx = 330, by = my - 7;
+      c.fillStyle = 'rgba(255,255,255,0.15)';
+      rr(c, bx, by, bw, 12, 6); c.fill();
+      c.fillStyle = done ? '#4ade80' : '#fbbf24';
+      rr(c, bx, by, bw * prog / def.target, 12, 6); c.fill();
+      c.fillStyle = '#fde68a';
+      c.font = 'bold 12px Arial';
+      c.textAlign = 'right';
+      c.fillText(prog + '/' + def.target, bx - 8, my);
+      c.textAlign = 'left';
+    }
+
+    if (panel === 'howto') {
+      c.fillStyle = 'rgba(0,0,0,0.6)';
+      c.fillRect(0, 0, W, H);
+      drawShadowCard(c, 40, 180, 400, 420, 18, ['#f8fafc', '#e2e8f0']);
+      c.fillStyle = '#1e293b';
+      c.font = 'bold 24px Arial';
+      c.textAlign = 'center';
+      c.fillText(t('howto'), 240, 225);
+      c.font = '16px Arial';
+      c.textAlign = 'left';
+      var lines = [t('howto1'), t('howto2'), t('howto3')];
+      for (var li = 0; li < lines.length; li++) {
+        wrapText(c, lines[li], 64, 270 + li * 72, 352, 22);
+      }
+      drawMagnetShape(c, 240, 500, 26, skinDef(selectedSkin), 0, 0.6);
+      drawButton(c, BTN.howtoClose, t('close'), 'blue', 'howtoClose', 18);
+    }
+  }
+
+  function wrapText(c, text, x, y, maxW, lineH) {
+    var words = text.split(' ');
+    var line = '', yy = y;
+    for (var i = 0; i < words.length; i++) {
+      var test = line ? line + ' ' + words[i] : words[i];
+      if (c.measureText(test).width > maxW && line) {
+        c.fillText(line, x, yy);
+        line = words[i];
+        yy += lineH;
+      } else {
+        line = test;
+      }
+    }
+    c.fillText(line, x, yy);
+  }
+
+  function renderLevels() {
+    var c = ctx;
+    c.fillStyle = 'rgba(8,10,18,0.45)';
+    c.fillRect(0, 0, W, H);
+    drawIconButton(c, BTN.back, '‹', 'back', false);
+    c.fillStyle = '#ffffff';
+    c.font = 'bold 26px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t('levels'), 240, 34);
+    drawCoinsBadge(c, 316, 14, 150, 40);
+    c.save();
+    c.beginPath(); c.rect(0, 100, W, H - 100); c.clip();
+    for (var i = 0; i < TOTAL_LEVELS; i++) {
+      var r = levelCellRect(i);
+      if (r.y > H || r.y + r.h < 100) continue;
+      var locked = i + 1 > unlocked;
+      var isNext = i + 1 === unlocked;
+      if (locked) {
+        drawShadowCard(c, r.x, r.y, r.w, r.h, 14, ['#3f3f4d', '#26262f']);
+        c.fillStyle = '#71717a';
+        c.font = 'bold 26px Arial';
+        c.textAlign = 'center';
+        c.fillText('🔒', r.x + r.w / 2, r.y + r.h / 2 + 2);
+      } else {
+        var cols = isNext ? ['#fde68a', '#f59e0b'] : ['#e0e7ff', '#818cf8'];
+        drawShadowCard(c, r.x, r.y, r.w, r.h, 14, cols);
+        c.fillStyle = isNext ? '#78350f' : '#1e293b';
+        c.font = 'bold 26px Arial';
+        c.textAlign = 'center';
+        c.fillText(String(i + 1), r.x + r.w / 2, r.y + 32);
+        var st = stars[i] || 0;
+        for (var s = 0; s < 3; s++) {
+          drawStarShape(c, r.x + 22 + s * 20, r.y + 62, 8, s < st ? '#facc15' : 'rgba(0,0,0,0.18)');
+        }
+      }
+    }
+    c.restore();
+    if (levelsScroll > 2) {
+      c.fillStyle = 'rgba(255,255,255,0.5)';
+      c.font = 'bold 16px Arial'; c.textAlign = 'center';
+      c.fillText('▲', 240, 108);
+    }
+  }
+
+  function renderShop() {
+    var c = ctx;
+    c.fillStyle = 'rgba(8,10,18,0.45)';
+    c.fillRect(0, 0, W, H);
+    drawIconButton(c, BTN.back, '‹', 'back', false);
+    c.fillStyle = '#ffffff';
+    c.font = 'bold 26px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t('shop'), 240, 34);
+    drawCoinsBadge(c, 316, 14, 150, 40);
+    drawButton(c, BTN.tabMagnets, t('tabMagnets'), shopTab === 'magnets' ? 'green' : 'steel', 'tabMagnets', 15);
+    drawButton(c, BTN.tabSkins, t('tabSkins'), shopTab === 'skins' ? 'green' : 'steel', 'tabSkins', 15);
+    drawButton(c, BTN.tabEnvs, t('tabEnvs'), shopTab === 'envs' ? 'green' : 'steel', 'tabEnvs', 15);
+    var items = shopItems();
+    c.save();
+    c.beginPath(); c.rect(0, 120, W, H - 120); c.clip();
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var r = shopRowRect(i);
+      if (r.y > H || r.y + r.h < 120) continue;
+      var owned, selected;
+      if (shopTab === 'magnets') { owned = ownedMagnets.indexOf(it.id) !== -1; selected = selectedMagnet === it.id; }
+      else if (shopTab === 'skins') { owned = ownedSkins.indexOf(it.id) !== -1; selected = selectedSkin === it.id; }
+      else { owned = ownedEnvs.indexOf(it.id) !== -1; selected = selectedEnv === it.id; }
+      drawShadowCard(c, r.x, r.y, r.w, r.h, 14, selected ? ['#fef9c3', '#fde68a'] : ['#2b2b3d', '#1d1d29']);
+      var txCol = selected ? '#1e293b' : '#f1f5f9';
+      // Icon.
+      if (shopTab === 'magnets') {
+        var mSkin = it.id === 'golden' ? { a: '#d97706', b: '#fef3c7', ring: 'rgba(217,119,6,0.3)', glow: '#fbbf24' }
+          : it.id === 'steel' ? { a: '#64748b', b: '#e2e8f0', ring: 'rgba(100,116,139,0.3)', glow: '#94a3b8' }
+          : it.id === 'super' ? { a: '#2563eb', b: '#dbeafe', ring: 'rgba(37,99,235,0.3)', glow: '#60a5fa' }
+          : skinDef('classic');
+        drawMagnetShape(c, r.x + 58, r.y + 64, 30, mSkin, 0, 0.7);
+      } else if (shopTab === 'skins') {
+        drawMagnetShape(c, r.x + 58, r.y + 64, 30, it, 0, 0.7);
+      } else {
+        var envCols = { workshop: '#b08968', scrapyard: '#5a6055', neon: '#1d1a4d', space: '#191936' };
+        c.fillStyle = envCols[it.id] || '#555';
+        rr(c, r.x + 18, r.y + 24, 80, 80, 10); c.fill();
+        c.strokeStyle = 'rgba(255,255,255,0.3)'; c.lineWidth = 2;
+        rr(c, r.x + 18, r.y + 24, 80, 80, 10); c.stroke();
+        drawMetalPiece(c, r.x + 58, r.y + 64, 'gear', 14, 0);
+      }
+      // Name + stats.
+      c.fillStyle = txCol;
+      c.font = 'bold 19px Arial';
+      c.textAlign = 'left'; c.textBaseline = 'middle';
+      c.fillText(t(it.nameKey), r.x + 116, r.y + 30);
+      c.font = '14px Arial';
+      c.fillStyle = selected ? '#57534e' : '#cbd5e1';
+      if (shopTab === 'magnets') {
+        c.fillText(t('pull') + ' ' + it.pullR + '  •  ' + t('power') + ' ' + it.pull.toFixed(1) + 'x', r.x + 116, r.y + 58);
+        // Pull bar.
+        c.fillStyle = 'rgba(0,0,0,0.2)';
+        rr(c, r.x + 116, r.y + 76, 180, 10, 5); c.fill();
+        c.fillStyle = '#22c55e';
+        rr(c, r.x + 116, r.y + 76, 180 * it.pullR / 160, 10, 5); c.fill();
+        if (it.coinBonus) {
+          c.fillStyle = '#fbbf24';
+          c.font = 'bold 13px Arial';
+          c.fillText(t('bonusCoins'), r.x + 116, r.y + 106);
+        }
+      } else if (shopTab === 'skins') {
+        c.fillText('—', r.x + 116, r.y + 58);
+      } else {
+        c.fillText('—', r.x + 116, r.y + 58);
+      }
+      // Action button.
+      var ar = shopActionRect(i);
+      if (selected) {
+        drawButton(c, ar, '✓ ' + t('selected'), 'green', null, 15);
+      } else if (owned) {
+        drawButton(c, ar, t('select'), 'blue', 'shop' + i, 15);
+      } else {
+        drawButton(c, ar, '', 'gold', 'shop' + i, 15);
+        drawCoinIcon(c, ar.x + 24, ar.y + ar.h / 2, 10);
+        c.fillStyle = '#ffffff';
+        c.font = 'bold 17px Arial';
+        c.textAlign = 'left'; c.textBaseline = 'middle';
+        c.fillText(String(it.price), ar.x + 42, ar.y + ar.h / 2 + 1);
+      }
+    }
+    c.restore();
+  }
+
+  function renderPlaying() {
+    var c = ctx;
+    var def = levelDef;
+    var pulse = Math.sin(time * 4) * 0.5 + 0.5;
+
+    // Finish zone (under everything else in the arena).
+    drawFinishZone(c, def.finish[0], def.finish[1], gateOpen, pulse);
+
+    for (var bi = 0; bi < blocks.length; bi++) drawBlock(c, blocks[bi]);
+    for (var gi = 0; gi < gates.length; gi++) drawGate(c, gates[gi]);
+    for (var wi = 0; wi < woods.length; wi++) drawWood(c, woods[wi]);
+    for (var si = 0; si < spikes.length; si++) drawSpikeZone(c, spikes[si].x, spikes[si].y, spikes[si].r, pulse);
+    for (var ai = 0; ai < attractors.length; ai++) drawEnemyMagnet(c, attractors[ai].x, attractors[ai].y, 'attractor', pulse);
+    for (var ri = 0; ri < repellers.length; ri++) drawEnemyMagnet(c, repellers[ri].x, repellers[ri].y, 'repeller', pulse);
+
+    // Free + stolen pieces.
+    for (var pi = 0; pi < pieces.length; pi++) {
+      var p = pieces[pi];
+      if (p.state === 'free' || p.state === 'stolen') {
+        drawMetalPiece(c, p.x, p.y, p.type, p.type === 'key' ? 14 : PIECE_R, p.x * 0.01 + p.y * 0.013);
+      }
+    }
+
+    // Pull-radius field ring.
+    var md = magnetDef(selectedMagnet);
+    var skin = skinDef(selectedSkin);
+    var ringA = pointer.down ? 0.55 : 0.28;
+    c.strokeStyle = skin.ring;
+    c.globalAlpha = ringA;
+    c.lineWidth = 2;
+    c.setLineDash([10, 10]);
+    c.beginPath(); c.arc(magnet.x, magnet.y, md.pullR, 0, Math.PI * 2); c.stroke();
+    c.setLineDash([]);
+    var fg = c.createRadialGradient(magnet.x, magnet.y, MAGNET_R, magnet.x, magnet.y, md.pullR);
+    fg.addColorStop(0, skin.ring);
+    fg.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = fg;
+    c.globalAlpha = ringA * 0.5;
+    c.beginPath(); c.arc(magnet.x, magnet.y, md.pullR, 0, Math.PI * 2); c.fill();
+    c.globalAlpha = 1;
+
+    // Magnet + attached / stealing pieces.
+    drawMagnetShape(c, magnet.x, magnet.y, MAGNET_R, skin, magnet.squash, pointer.down ? 1 : 0.7);
+    for (var qi = 0; qi < pieces.length; qi++) {
+      var q = pieces[qi];
+      if (q.state === 'attached' || q.state === 'stealing') {
+        drawMetalPiece(c, q.x, q.y, q.type, q.type === 'key' ? 13 : PIECE_R - 1, q.slot * 0.7);
+      }
+    }
+
+    // Particles + floaters.
+    for (var xi = 0; xi < particles.length; xi++) {
+      var pt = particles[xi];
+      var f = 1 - pt.life / pt.maxLife;
+      c.globalAlpha = f;
+      if (pt.type === 'ring') {
+        c.strokeStyle = pt.color;
+        c.lineWidth = 2;
+        c.beginPath(); c.arc(pt.x, pt.y, 6 + (1 - f) * 34, 0, Math.PI * 2); c.stroke();
+      } else {
+        c.fillStyle = pt.color;
+        c.beginPath(); c.arc(pt.x, pt.y, pt.size * f + 0.5, 0, Math.PI * 2); c.fill();
+      }
+    }
+    c.globalAlpha = 1;
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    for (var fi = 0; fi < floaters.length; fi++) {
+      var fl = floaters[fi];
+      c.globalAlpha = 1 - fl.t / 1.1;
+      c.fillStyle = fl.color;
+      c.font = 'bold 18px Arial';
+      c.fillText(fl.text, fl.x, fl.y);
+    }
+    c.globalAlpha = 1;
+
+    renderHud();
+    if (tutorialActive) renderTutorial();
+
+    if (panel === 'complete') renderCompletePanel();
+    else if (panel === 'failed') renderFailedPanel();
+    else if (panel === 'paused') renderPausedPanel();
+
+    // Confetti on top.
+    for (var ci = 0; ci < confetti.length; ci++) {
+      var cf = confetti[ci];
+      c.save();
+      c.translate(cf.x, cf.y);
+      c.rotate(cf.rot);
+      c.fillStyle = cf.color;
+      c.fillRect(-cf.size / 2, -cf.size / 4, cf.size, cf.size / 2);
+      c.restore();
+    }
+  }
+
+  function renderHud() {
+    var c = ctx;
+    drawIconButton(c, BTN.pause, '❚❚', 'pause', false);
+    drawIconButton(c, BTN.hudMute, AudioSys.userMuted ? '✕' : '♪', 'hudMute', AudioSys.userMuted);
+    drawIconButton(c, BTN.hudRestart, '↺', 'hudRestart', false);
+    drawCoinsBadge(c, 316, 14, 150, 40);
+    c.fillStyle = '#ffffff';
+    c.font = 'bold 19px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(isDaily ? t('dailyTitle') : t('level') + ' ' + (levelIndex + 1), 240, 34);
+    // Progress bar.
+    var pct = clamp(collected / levelDef.req, 0, 1);
+    c.fillStyle = 'rgba(0,0,0,0.35)';
+    rr(c, 16, 66, 448, 34, 10); c.fill();
+    c.fillStyle = 'rgba(255,255,255,0.15)';
+    rr(c, 16, 66, 448, 34, 10); c.fill();
+    var pg = c.createLinearGradient(16, 0, 464, 0);
+    pg.addColorStop(0, '#4ade80'); pg.addColorStop(1, '#22c55e');
+    c.fillStyle = pg;
+    if (pct > 0) { rr(c, 18, 68, 444 * pct, 30, 8); c.fill(); }
+    c.fillStyle = '#ffffff';
+    c.font = 'bold 17px Arial';
+    c.fillText(collected + ' / ' + levelDef.req + '  ' + t('pieces'), 240, 84);
+    // Bottom bar: goal + timer/par.
+    c.fillStyle = 'rgba(0,0,0,0.35)';
+    rr(c, 16, 712, 448, 72, 12); c.fill();
+    c.fillStyle = '#e2e8f0';
+    c.font = '15px Arial';
+    c.textAlign = 'left';
+    c.fillText(t('goal') + ' ' + levelDef.req + ' ' + t('pieces'), 32, 736);
+    c.textAlign = 'right';
+    if (levelDef.time) {
+      var left = Math.max(0, levelDef.time - levelTime);
+      var mm = Math.floor(left / 60), ss = Math.floor(left % 60);
+      c.fillStyle = left <= 10 ? '#f87171' : '#fde68a';
+      c.font = 'bold 20px Arial';
+      c.fillText(mm + ':' + (ss < 10 ? '0' : '') + ss, 448, 736);
+      c.fillStyle = '#cbd5e1';
+      c.font = '13px Arial';
+      c.fillText(t('level') + ' ' + (isDaily ? '•' : (levelIndex + 1)) + '  •  ' + t('stars') + ': ' + (stars[levelIndex] || 0) + '/3', 448, 762);
+    } else {
+      c.fillStyle = '#fde68a';
+      c.font = 'bold 16px Arial';
+      c.fillText('★3 ≤ ' + levelDef.par + t('sec'), 448, 736);
+      c.fillStyle = '#cbd5e1';
+      c.font = '13px Arial';
+      c.fillText(t('level') + ' ' + (isDaily ? '•' : (levelIndex + 1)) + '  •  ' + t('stars') + ': ' + (stars[levelIndex] || 0) + '/3', 448, 762);
+    }
+    c.textAlign = 'left';
+  }
+
+  function drawHand(c, x, y, angle) {
+    // Stylized white-glove pointer hand.
+    c.save();
+    c.translate(x, y);
+    c.rotate(angle || 0);
+    c.fillStyle = '#ffffff';
+    c.strokeStyle = '#334155'; c.lineWidth = 2;
+    c.beginPath(); c.arc(0, 0, 15, 0, Math.PI * 2); c.fill(); c.stroke();
+    rr(c, -5, -34, 10, 26, 5); c.fill(); c.stroke();
+    c.beginPath(); c.arc(-13, -6, 6, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.restore();
+    c.strokeStyle = 'rgba(255,255,255,0.8)';
+    c.lineWidth = 2;
+    c.beginPath(); c.arc(x, y, 24 + Math.sin(time * 5) * 4, 0, Math.PI * 2); c.stroke();
+  }
+
+  function renderTutorial() {
+    var c = ctx;
+    var ph = tutorialPhase();
+    if (!ph) return;
+    // Banner.
+    drawShadowCard(c, 24, 124, 432, 48, 12, ['rgba(30,30,46,0.92)', 'rgba(20,20,32,0.92)']);
+    c.fillStyle = '#ffffff';
+    c.font = 'bold 15px Arial';
+    c.textAlign = 'left'; c.textBaseline = 'middle';
+    var text = ph === 'drag' ? t('tut1') : ph === 'collect' ? t('tut3') : t('tut4');
+    c.fillText(text, 40, 149);
+    drawButton(c, BTN.tutSkip, t('skip'), 'red', 'tutSkip', 13);
+    if (ph === 'drag') {
+      // Hand loops from the magnet toward the first cluster.
+      var cl = levelDef.clusters[0];
+      var f = (Math.sin(tutT * 1.4) * 0.5 + 0.5);
+      var hx = magnet.x + (cl[0] - magnet.x) * f;
+      var hy = magnet.y + (cl[1] - magnet.y) * f;
+      c.strokeStyle = 'rgba(255,255,255,0.6)';
+      c.lineWidth = 2;
+      c.setLineDash([6, 8]);
+      c.beginPath(); c.moveTo(magnet.x, magnet.y); c.lineTo(cl[0], cl[1]); c.stroke();
+      c.setLineDash([]);
+      drawHand(c, hx, hy, 0.5);
+    } else if (ph === 'finish') {
+      // Bouncing arrow over the finish zone.
+      var fx = levelDef.finish[0], fy = levelDef.finish[1];
+      var bob = Math.sin(time * 5) * 6;
+      c.fillStyle = '#4ade80';
+      c.beginPath();
+      c.moveTo(fx, fy - FINISH_R - 34 + bob);
+      c.lineTo(fx - 14, fy - FINISH_R - 52 + bob);
+      c.lineTo(fx + 14, fy - FINISH_R - 52 + bob);
+      c.closePath(); c.fill();
+      drawHand(c, fx + 52, fy - 30, -0.6);
+    }
+  }
+
+  function renderCompletePanel() {
+    var c = ctx;
+    c.fillStyle = 'rgba(0,0,0,0.55)';
+    c.fillRect(0, 0, W, H);
+    drawShadowCard(c, 40, 180, 400, 440, 18, ['#f8fafc', '#e2e8f0']);
+    c.fillStyle = '#1e293b';
+    c.font = 'bold 26px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(isDaily ? t('dailyTitle') : t('complete'), 240, 222);
+    if (!isDaily) {
+      for (var s = 0; s < 3; s++) {
+        var pop = clamp((completeT - 0.25 - s * 0.3) / 0.3, 0, 1);
+        var sc = pop > 0 ? easeOutBack(pop) : 0;
+        var filled = s < lastStars;
+        c.save();
+        c.translate(170 + s * 70, 285);
+        c.scale(Math.max(0.01, sc), Math.max(0.01, sc));
+        drawStarShape(c, 0, 0, 26, filled ? '#facc15' : '#cbd5e1');
+        c.restore();
+        if (filled && pop > 0 && pop < 1) { /* pop-in handled by scale */ }
+      }
+      if (lastIsNewBest) {
+        c.fillStyle = '#d97706';
+        c.font = 'bold 16px Arial';
+        c.fillText('★ ' + t('newBest'), 240, 330);
+      }
+      c.fillStyle = '#475569';
+      c.font = '17px Arial';
+      c.textAlign = 'left';
+      c.fillText(t('level') + ' ' + (levelIndex + 1) + '  •  ' + Math.floor(levelTime) + t('sec'), 70, 360);
+      c.fillText(t('timeBonus') + ': +' + lastTimeBonus, 70, 388);
+      c.fillText(t('stars') + ': +' + (25 * lastStars), 70, 416);
+      c.fillStyle = '#16a34a';
+      c.font = 'bold 22px Arial';
+      c.fillText(t('total') + ': +' + lastCoins + '  🪙', 70, 448);
+      c.textAlign = 'center';
+    } else {
+      c.fillStyle = '#16a34a';
+      c.font = 'bold 22px Arial';
+      c.fillText(lastDailyReward > 0 ? t('dailyWin') : t('dailyDone'), 240, 300);
+      c.fillStyle = '#475569';
+      c.font = '17px Arial';
+      c.fillText(lastDailyReward > 0 ? '+' + lastDailyReward + ' ' + t('coins') : '', 240, 340);
+      if (tutorialActive) {
+        c.fillStyle = '#1e293b';
+        c.font = 'bold 16px Arial';
+        c.fillText(t('tutDone'), 240, 380);
+      }
+    }
+    if (tutorialJustDone) {
+      c.fillStyle = '#1e293b';
+      c.font = 'bold 15px Arial';
+      c.fillText(t('tutDone'), 240, 604);
+    }
+    drawButton(c, BTN.next, isDaily ? t('menu') : (levelIndex + 1 < TOTAL_LEVELS ? t('next') : t('menu')), 'green', 'next', 20);
+    drawButton(c, BTN.replay, t('replay'), 'steel', 'replay', 17);
+    drawButton(c, BTN.toMenu, t('menu'), 'blue', 'toMenu', 17);
+  }
+
+  function renderFailedPanel() {
+    var c = ctx;
+    c.fillStyle = 'rgba(0,0,0,0.55)';
+    c.fillRect(0, 0, W, H);
+    drawShadowCard(c, 40, 240, 400, 280, 18, ['#f8fafc', '#e2e8f0']);
+    c.fillStyle = '#dc2626';
+    c.font = 'bold 28px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t('failed'), 240, 290);
+    c.fillStyle = '#475569';
+    c.font = '16px Arial';
+    c.fillText(collected + ' / ' + levelDef.req + ' ' + t('pieces'), 240, 330);
+    drawButton(c, BTN.retry, t('retry'), 'green', 'retry', 20);
+    drawButton(c, BTN.failMenu, t('menu'), 'blue', 'failMenu', 18);
+  }
+
+  function renderPausedPanel() {
+    var c = ctx;
+    c.fillStyle = 'rgba(0,0,0,0.55)';
+    c.fillRect(0, 0, W, H);
+    drawShadowCard(c, 40, 240, 400, 300, 18, ['#f8fafc', '#e2e8f0']);
+    c.fillStyle = '#1e293b';
+    c.font = 'bold 28px Arial';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(t('pause'), 240, 290);
+    drawButton(c, BTN.resume, t('resume'), 'green', 'resume', 20);
+    drawButton(c, BTN.pauseRestart, t('restart'), 'steel', 'pauseRestart', 18);
+    drawButton(c, BTN.pauseMenu, t('menu'), 'blue', 'pauseMenu', 18);
+  }
+
+  function render() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (!bgCanvas || bgEnv !== selectedEnv) rebuildBackground();
+    ctx.drawImage(bgCanvas, 0, 0, W, H);
+    ctx.save();
+    if (shake > 0 && state === 'playing') {
+      ctx.translate(rand(-shake, shake) * 0.5, rand(-shake, shake) * 0.5);
+    }
+    if (state === 'loading') {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 24px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('MAGNET MASTER', 240, 400);
+    } else if (state === 'menu') renderMenu();
+    else if (state === 'levels') renderLevels();
+    else if (state === 'shop') renderShop();
+    else if (state === 'playing') renderPlaying();
+    ctx.restore();
+    // Toast.
+    if (toast && time < toastUntil) {
+      var c = ctx;
+      c.font = 'bold 15px Arial';
+      var tw = Math.min(440, c.measureText(toast).width + 36);
+      drawShadowCard(c, 240 - tw / 2, 392, tw, 36, 18, ['#1e293b', '#0f172a']);
+      c.fillStyle = '#fde68a';
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(toast, 240, 411);
+    }
+  }
+
+  // ============================== Main loop ==============================
+  var tutorialJustDone = false;
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    var dt = Math.min(0.05, (ts - lastTs) / 1000 || 0.016);
+    lastTs = ts;
+    time += dt;
+    if (tutorialActive) tutT += dt;
+    if (state === 'playing') {
+      if (!panel) updatePlaying(dt);
+      else {
+        if (panel === 'complete') completeT += dt;
+        updateFx(dt);
+      }
+    } else {
+      updateFx(dt);
+    }
+    render();
+  }
+
+  // ============================== Boot ==============================
+  function boot() {
+    resize();
+    window.addEventListener('resize', resize);
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('keydown', onKeyDown);
+    document.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+    render();
+    Bridge.init().then(function () {
+      var rawLang = '';
+      try { rawLang = window.bridge.platform.language || ''; } catch (e) {}
+      Bridge.subscribe();
+      Bridge.applyInitialPlatformState();
+      return Bridge.loadProgress().then(function (p) {
+        coins = p.coins;
+        stars = p.stars || [];
+        unlocked = clamp(p.unlocked, 1, TOTAL_LEVELS);
+        mClaimed = p.mprogress || { levels10: 0, pieces250: 0, stars5: 0 };
+        totalPieces = p.totalPieces || 0;
+        lastDaily = p.lastDaily || '';
+        levelsCompleted = p.levelsCompleted || 0;
+        tutorialDone = !!p.tutorial;
+        if (p.shop) {
+          if (p.shop.magnets) {
+            ownedMagnets = p.shop.magnets.owned || ['classic'];
+            selectedMagnet = p.shop.magnets.selected || 'classic';
+          }
+          if (p.shop.skins) {
+            ownedSkins = p.shop.skins.owned || ['classic'];
+            selectedSkin = p.shop.skins.selected || 'classic';
+          }
+          if (p.shop.envs) {
+            ownedEnvs = p.shop.envs.owned || ['workshop'];
+            selectedEnv = p.shop.envs.selected || 'workshop';
+          }
+        }
+        // Migration: a player with any stars has played before — never
+        // tutorialize them mid-game.
+        var anyStars = false;
+        for (var i = 0; i < stars.length; i++) if (stars[i] > 0) { anyStars = true; break; }
+        if (anyStars) tutorialDone = true;
+        AudioSys.setUserMuted(!!p.muted);
+        setLanguage(p.lang || rawLang || 'en');
+        state = 'menu';
+        AudioSys.setMusicMode('menu');
+        rebuildBackground();
+        requestAnimationFrame(frame);
+        Bridge.send('game_ready');
+      });
+    }).catch(function () {
+      state = 'menu';
+      rebuildBackground();
+      requestAnimationFrame(frame);
+    });
+  }
+
+  // Debug hook for automated testing (?debug=1): read-only state + helpers.
+  // Harmless in production: it only exposes game state and test helpers.
+  try {
+    if (typeof window !== 'undefined' && window.location && window.location.search.indexOf('debug') !== -1) {
+      window.MAGNET_DEBUG = {
+        getState: function () {
+          var byState = { free: 0, attached: 0, stealing: 0, stolen: 0 };
+          for (var i = 0; i < pieces.length; i++) byState[pieces[i].state]++;
+          return {
+            state: state, panel: panel, phase: phase,
+            level: isDaily ? -1 : levelIndex + 1, isDaily: isDaily,
+            coins: coins, stars: stars.slice(), unlocked: unlocked,
+            collected: collected, req: levelDef ? levelDef.req : 0,
+            totalInLevel: totalInLevel, gateOpen: gateOpen,
+            knockoffs: knockoffs, levelTime: Math.round(levelTime * 10) / 10,
+            timeLeft: levelDef && levelDef.time ? Math.max(0, levelDef.time - levelTime) : null,
+            magnet: { x: Math.round(magnet.x), y: Math.round(magnet.y) },
+            piecesByState: byState,
+            gates: gates.map(function (g) { return { open: g.open, kind: g.kind, x: g.x, y: g.y, w: g.w, h: g.h }; }),
+            spikes: spikes.map(function (s) { return { x: Math.round(s.x), y: Math.round(s.y), r: s.r, moving: s.moving }; }),
+            attractors: attractors.map(function (a) { return { x: a.x, y: a.y }; }),
+            keysTaken: keyPieces.map(function (k) { return k.taken; }),
+            lastStars: lastStars, lastCoins: lastCoins, lastTimeBonus: lastTimeBonus,
+            lastDailyReward: lastDailyReward,
+            tutorialActive: tutorialActive, tutorialDone: tutorialDone,
+            tutorialPhase: tutorialPhase(),
+            missions: MISSION_DEFS.map(function (def) {
+              var prog = missionProgress(def);
+              return { id: def.id, progress: prog, target: def.target, reward: def.reward, done: prog >= def.target, claimed: !!mClaimed[def.id] };
+            }),
+            totalPieces: totalPieces, levelsCompleted: levelsCompleted,
+            muted: AudioSys.userMuted,
+            musicStarted: AudioSys.music.started, musicMode: AudioSys.music.mode,
+            musicAudible: AudioSys.music.started && !AudioSys.isMuted() && !!AudioSys.ctx && AudioSys.ctx.state === 'running',
+            humOn: AudioSys.hum.on,
+            audioLog: AudioSys.log.slice(-30).map(function (e) { return e.name; }),
+            ownedMagnets: ownedMagnets.slice(), selectedMagnet: selectedMagnet,
+            ownedSkins: ownedSkins.slice(), selectedSkin: selectedSkin,
+            ownedEnvs: ownedEnvs.slice(), selectedEnv: selectedEnv,
+            shopTab: shopTab, lang: lang,
+            dailyAvailable: dailyAvailable(), dailyKey: dailyKey(),
+            buttons: JSON.parse(JSON.stringify(BTN))
+          };
+        },
+        getLevels: function () {
+          return {
+            levels: JSON.parse(JSON.stringify(LEVELS)),
+            daily: JSON.parse(JSON.stringify(DAILY_TEMPLATES))
+          };
+        },
+        getShop: function () {
+          return {
+            magnets: JSON.parse(JSON.stringify(MAGNETS)),
+            skins: JSON.parse(JSON.stringify(SKINS)),
+            envs: JSON.parse(JSON.stringify(ENVS))
+          };
+        },
+        levelCellRect: function (i) { return levelCellRect(i); },
+        shopActionRect: function (i) { return shopActionRect(i); },
+        setLevel: function (n) {
+          loadLevel(clamp(n, 1, TOTAL_LEVELS) - 1, false);
+          state = 'playing';
+        },
+        setDaily: function () { loadLevel(-1, true); state = 'playing'; },
+        setCoins: function (n) { coins = n; Bridge.saveProgress('coins', coins); },
+        setStars: function (arr) { stars = arr.slice(); Bridge.saveProgress('stars', stars); },
+        setUnlocked: function (n) { unlocked = clamp(n, 1, TOTAL_LEVELS); Bridge.saveProgress('unlocked', unlocked); },
+        setTotalPieces: function (n) { totalPieces = n; Bridge.saveProgress('totalPieces', totalPieces); },
+        setLastDaily: function (s) { lastDaily = s; Bridge.saveProgress('lastDaily', lastDaily); },
+        setTutorialDone: function (b) { tutorialDone = b; Bridge.saveProgress('tutorial', b ? '1' : '0'); },
+        setPointer: function (x, y, down) { pointer.x = x; pointer.y = y; pointer.down = !!down; if (down) hasDragged = true; },
+        setLevelTime: function (t) { levelTime = t; },
+        simulateWin: function (starsWanted) {
+          starsWanted = clamp(starsWanted || 3, 1, 3);
+          knockoffs = starsWanted === 1 ? 1 : 0;
+          levelTime = starsWanted === 3 ? Math.max(0, levelDef.par - 1) : levelDef.par + 10;
+          totalPieces += levelDef.req;
+          collected = levelDef.req;
+          gateOpen = true;
+          magnet.x = levelDef.finish[0];
+          magnet.y = levelDef.finish[1];
+          phase = 'play';
+          panel = null;
+          completeLevel();
+          return true;
+        }
+      };
+    }
+  } catch (e) {}
+
+  boot();
+})();
+
+</script>
+</body>
+</html>
